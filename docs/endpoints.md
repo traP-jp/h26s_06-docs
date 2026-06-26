@@ -1,0 +1,5 @@
+- `/api/auth/login` OAuth2. 0のログインURL
+- `/api/auth/callback` OAuth2. 0のコールバックURL
+- `/api/auth/logout` ログアウト
+- `/api/events`　SSE 配信
+- `/api/me` ユーザー情報取得
