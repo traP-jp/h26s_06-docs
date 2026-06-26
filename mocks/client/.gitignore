@@ -1,5 +1,3 @@
-.specs/
-.env
 node_modules/
 dist/
 *.log
