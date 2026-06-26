@@ -57,66 +57,9 @@ type StateManager struct {
 
 ---
 
-## 3. SSE ペイロード仕様
+## 3. コアロジックの詳細
 
-SSEストリームでは、イベント種別（`event:`）に応じて極限まで軽量化したJSONデータを配信する。
-
-### 3.1 `init` イベント (初期化データ)
-
-新規クライアント接続時に一度だけ送信される、全7000チャンネルの構造データ。サーバー側で事前にJSONとしてキャッシュしておく。
-
-```json
-event: init
-data: {
-  "channels": {
-    "grand_root": { "id": "grand_root", "parentId": "", "children": ["root_ch_1", "root_ch_2"] },
-    "root_ch_1": { "id": "root_ch_1", "parentId": "grand_root", "children": ["sub_ch_10"] }
-  }
-}
-
-```
-
-### 3.2 `trigger` イベント (インパルス配信)
-
-投稿（波紋）や移動（ビーム）が発生した瞬間に即時ブロードキャストされる軽量トリガー。キー名を短縮し帯域を節約する。
-
-**投稿 (MessageCreated) 時:**
-
-```json
-event: trigger
-data: {"type": "msg", "ch": "sub_ch_10"}
-
-```
-
-**移動 (ChannelWatched) 時:**
-
-```json
-event: trigger
-data: {"type": "mov", "usr": "user_hash_123", "from": "sub_ch_10", "to": "sub_ch_11"}
-
-```
-
-### 3.3 `sync` イベント (定期同期)
-
-30秒ごとにバックエンドの「正解スコア」を配信し、フロントエンドの自律減衰によるズレを補正する。抽出された差分のみを送信する。
-
-```json
-event: sync
-data: {
-  "ts": 1719300000,
-  "deltas": {
-    "sub_ch_10": 45.2,
-    "root_ch_1": 12.8
-  }
-}
-
-```
-
----
-
-## 4. コアロジックの詳細
-
-### 4.1 初期化データのキューイング（メモリスパイク対策）
+### 3.1 初期化データのキューイング（メモリスパイク対策）
 
 150MBのメモリ制約を守るため、700人が一斉に接続してきた際のHTTP書き込みバッファのスパイクをセマフォで制御する。同時に巨大なJSONを送信できるゴルーチン数を制限する。
 
@@ -135,11 +78,11 @@ func handleSSEConnect(w http.ResponseWriter, r *http.Request) {
 
 ```
 
-### 4.2 移動検知ロジック
+### 3.2 移動検知ロジック
 
 traQからのイベント受信時、インメモリの `users["userID"].CurrentChannel` と比較し、変化があれば `trigger(type: mov)` イベントを生成して `CurrentChannel` を更新する。
 
-### 4.3 確率的な同期イベントの送信アルゴリズム
+### 3.3 確率的な同期イベントの送信アルゴリズム
 
 全チャンネルのスコアが常に減衰し続ける仕様において、差分抽出を効果的に機能させるため、**「スコア変化量」と「経過時間」に基づく確率的同期**を行う。
 
