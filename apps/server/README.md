@@ -1,9 +1,5 @@
 ## Setup
 
-```bash
-bun install
-```
-
 ## Tools
 
 ### ローカル実行
