@@ -10,7 +10,7 @@ import { calculateChannelLayout } from "./services/channelLayout";
 import { EventStream } from "./services/eventStream";
 import type { AuthUser } from "./types/api";
 
-type AuthState = "checking" | "authenticated" | "error";
+type AuthState = "checking" | "authenticated" | "error" | "forbidden";
 
 const isDemoMode = new URLSearchParams(window.location.search).get("demo") === "1";
 
@@ -42,7 +42,9 @@ const authState = ref<AuthState>(isDemoMode ? "authenticated" : "checking");
 const currentUser = ref<AuthUser>();
 const focusId = ref<string | undefined>();
 
-const showLoading = computed(() => authState.value !== "error" && !graph.value);
+const showLoading = computed(
+    () => authState.value !== "error" && authState.value !== "forbidden" && !graph.value
+);
 
 // audio settings
 const muted = ref(audioManager.muted);
@@ -80,6 +82,7 @@ function reloadPage(): void {
 }
 
 function unlockAudio(): void {
+    if (authState.value !== "authenticated") return;
     audioManager.unlock();
 }
 
@@ -274,6 +277,13 @@ onMounted(() => {
         return;
     }
 
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error") === "forbidden") {
+        history.replaceState(null, "", window.location.pathname);
+        authState.value = "forbidden";
+        return;
+    }
+
     void retryAuthentication();
 });
 
@@ -312,6 +322,7 @@ onBeforeUnmount(() => {
         @pointerdown.capture.once="unlockAudio"
     >
         <button
+            v-if="authState === 'authenticated'"
             type="button"
             class="settingsButton"
             :aria-expanded="settingsOpen"
@@ -516,6 +527,14 @@ onBeforeUnmount(() => {
         </div>
 
         <div
+            v-if="authState === 'forbidden'"
+            class="render-error ui-panel"
+        >
+            <p class="eyebrow">ACCESS DENIED</p>
+            <strong>このアカウントはアクセスが許可されていません</strong>
+        </div>
+
+        <div
             v-if="renderError"
             class="render-error ui-panel"
         >
@@ -534,7 +553,10 @@ onBeforeUnmount(() => {
                 <p class="eyebrow">traQ ACTIVITY OBSERVATORY</p>
                 <h1>Qosmos</h1>
             </div>
-            <div class="topbar__meta">
+            <div
+                v-if="authState === 'authenticated'"
+                class="topbar__meta"
+            >
                 <div
                     class="connection"
                     :data-state="connection"
@@ -569,7 +591,10 @@ onBeforeUnmount(() => {
             </div>
         </header>
 
-        <aside class="metrics ui-panel">
+        <aside
+            v-if="authState === 'authenticated'"
+            class="metrics ui-panel"
+        >
             <p class="eyebrow">STREAM OVERVIEW</p>
             <dl>
                 <div>
@@ -588,7 +613,10 @@ onBeforeUnmount(() => {
             </div>
         </aside>
 
-        <div class="display-controls ui-panel">
+        <div
+            v-if="authState === 'authenticated'"
+            class="display-controls ui-panel"
+        >
             <p class="eyebrow">DISPLAY</p>
             <button
                 :class="{ active: !activeOnly }"
@@ -633,7 +661,10 @@ onBeforeUnmount(() => {
             </dl>
         </aside>
 
-        <footer class="hint">
+        <footer
+            v-if="authState === 'authenticated'"
+            class="hint"
+        >
             <span>DRAG</span> 移動 <span>SCROLL</span> 拡大・縮小 <span>CLICK</span> 詳細
         </footer>
     </main>

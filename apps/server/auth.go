@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+type traqMe struct {
+	Name string `json:"name"`
+}
+
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.oauthClientID == "" {
 		http.Error(w, "TRAQ_CLIENT_ID is not configured", http.StatusServiceUnavailable)
@@ -41,6 +45,11 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("error") != "" {
+		http.Redirect(w, r, s.cfg.appOrigin, http.StatusFound)
+		return
+	}
+
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	if code == "" || state == "" {
@@ -57,6 +66,19 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		traqLogError("oauth token exchange failed: %v", err)
 		http.Error(w, "token exchange failed", http.StatusBadGateway)
 		return
+	}
+
+	if len(s.cfg.allowedTraqIDs) > 0 {
+		me, err := s.fetchTraqMe(r.Context(), token.AccessToken)
+		if err != nil {
+			traqLogError("failed to fetch traQ user info: %v", err)
+			http.Error(w, "failed to verify user identity", http.StatusBadGateway)
+			return
+		}
+		if !s.cfg.allowedTraqIDs[me.Name] {
+			http.Redirect(w, r, s.cfg.appOrigin+"?error=forbidden", http.StatusFound)
+			return
+		}
 	}
 
 	sessionID, err := randomToken(32)
@@ -155,6 +177,33 @@ func (s *server) sessionToken(r *http.Request) (tokenResponse, bool) {
 	defer s.authMu.Unlock()
 	token, ok := s.sessions[cookie.Value]
 	return token, ok
+}
+
+func (s *server) fetchTraqMe(ctx context.Context, accessToken string) (traqMe, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/users/me", nil)
+	if err != nil {
+		return traqMe{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return traqMe{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return traqMe{}, fmt.Errorf("users/me returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var me traqMe
+	if err := json.Unmarshal(body, &me); err != nil {
+		return traqMe{}, err
+	}
+	if me.Name == "" {
+		return traqMe{}, errors.New("users/me did not return name")
+	}
+	return me, nil
 }
 
 func randomToken(size int) (string, error) {

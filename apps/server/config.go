@@ -16,6 +16,7 @@ type config struct {
 	oauthRedirectURL      string
 	oauthScope            string
 	traqBotAccessToken    string
+	allowedTraqIDs        map[string]bool
 	syncInterval          time.Duration
 	viewerPollInterval    time.Duration
 	viewerChannelsPerTick int
@@ -30,6 +31,7 @@ func loadConfig() config {
 		oauthRedirectURL:      envString("TRAQ_REDIRECT_URL", "http://localhost:5173/oauth/callback"),
 		oauthScope:            envString("OAUTH_SCOPE", "read"),
 		traqBotAccessToken:    os.Getenv("TRAQ_BOT_ACCESS_TOKEN"),
+		allowedTraqIDs:        envStringSet("ALLOWED_TRAQ_IDS"),
 		syncInterval:          envDuration("SYNC_INTERVAL", 30*time.Second),
 		viewerPollInterval:    envDuration("VIEWER_POLL_INTERVAL", 20*time.Second),
 		viewerChannelsPerTick: envInt("VIEWER_POLL_CHANNELS", 40),
@@ -41,6 +43,24 @@ func envString(key string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envStringSet(key string) map[string]bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, id := range strings.Split(raw, ",") {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			set[id] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
 }
 
 func envDuration(key string, fallback time.Duration) time.Duration {
