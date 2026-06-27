@@ -9,7 +9,7 @@ interface CameraFrame {
     distance: number;
 }
 
-const DEFAULT_PADDING = 1.18;
+const DEFAULT_PADDING = 2.3;
 const DEFAULT_MARGIN = 14;
 const DEFAULT_MIN_DISTANCE = 160;
 

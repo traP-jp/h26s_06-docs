@@ -86,7 +86,7 @@ const desiredRotationCenter = new Vector3();
 const hoverPointer = new Vector2();
 const instanceColor = new Color();
 const ROTATION_CENTER_VIEWPORT_LIMIT = 0.92;
-const NODE_PICK_RADIUS = 16;
+const NODE_PICK_RADIUS = 28;
 
 function initialise() {
     const element = host.value;
