@@ -36,7 +36,7 @@ interface ForceNode extends SimulationNodeDatum {
     islandId: number;
     radius: number;
     emphasis: number;
-    relativeScore: number;
+    heatScore: number;
 }
 
 interface ForceLinkDatum extends SimulationLinkDatum<ForceNode> {
@@ -82,6 +82,7 @@ export function calculateLayout(nodes: LayoutNode[]) {
         hierarchy,
         positions
     );
+    const heatScores = aggregateHeatScores(activeNodes, hierarchy);
 
     const forceNodes: ForceNode[] = activeNodes.map(node => {
         const position = readPosition(positions, node.index);
@@ -93,7 +94,7 @@ export function calculateLayout(nodes: LayoutNode[]) {
             islandId: node.islandId,
             radius,
             emphasis: node.emphasis,
-            relativeScore: node.relativeScore,
+            heatScore: heatScores.get(node.index) ?? node.relativeScore,
             x: position.x,
             y: position.y,
             z: position.z,
@@ -190,6 +191,27 @@ function createActiveHierarchy(
     }
 
     return { childrenByParent, ordinalByChild };
+}
+
+function aggregateHeatScores(activeNodes: LayoutNode[], hierarchy: ActiveHierarchy) {
+    const heatScores = new Map<number, number>();
+    const nodeByIndex = new Map(activeNodes.map(node => [node.index, node]));
+
+    const visit = (node: LayoutNode): number => {
+        const cached = heatScores.get(node.index);
+        if (cached !== undefined) return cached;
+
+        let heat = node.relativeScore;
+        for (const childIndex of hierarchy.childrenByParent.get(node.index) ?? []) {
+            const child = nodeByIndex.get(childIndex);
+            if (child) heat = Math.max(heat, visit(child));
+        }
+        heatScores.set(node.index, heat);
+        return heat;
+    };
+
+    for (const node of activeNodes) visit(node);
+    return heatScores;
 }
 
 function createIslandCenters(islandIds: number[]) {
@@ -354,12 +376,12 @@ function forceHeatRepulsion(): Force<ForceNode> {
 
     const force = (alpha: number) => {
         for (const node of nodes) {
-            if (node.depth <= 0 || node.relativeScore <= 0) continue;
+            if (node.depth <= 0 || node.heatScore <= 0) continue;
 
             const position = pointFromForce(node);
             const axis =
                 lengthSquared(position) > 0.01 ? normalize(position) : fallbackAxis(node.id);
-            const strength = alpha * HEAT_REPULSION_STRENGTH * node.relativeScore;
+            const strength = alpha * HEAT_REPULSION_STRENGTH * node.heatScore;
             node.vx = (node.vx ?? 0) + axis.x * strength;
             node.vy = (node.vy ?? 0) + axis.y * strength;
             node.vz = (node.vz ?? 0) + axis.z * strength;

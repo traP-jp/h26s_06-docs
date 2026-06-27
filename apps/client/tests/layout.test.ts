@@ -67,6 +67,27 @@ function createHeatRepulsionTree(relativeScore: number): LayoutNode[] {
     return nodes;
 }
 
+function createChildHeatRepulsionTree(relativeScore: number): LayoutNode[] {
+    const nodes = createHeatRepulsionTree(0);
+    const childIndex = nodes.length;
+    nodes[2]!.children = [childIndex];
+    nodes.push({
+        index: childIndex,
+        parentIndex: 2,
+        children: [],
+        depth: 3,
+        islandId: 0,
+        isLayoutActive: true,
+        isExpansionOrigin: false,
+        emphasis: 1,
+        relativeScore,
+        x: 0,
+        y: 0,
+        z: 0,
+    });
+    return nodes;
+}
+
 function position(positions: Float32Array, index: number) {
     const offset = index * 3;
     return {
@@ -149,5 +170,14 @@ describe("calculateLayout", () => {
         expect(distance(position(hotPositions, 2), position(hotPositions, 0))).toBeGreaterThan(
             distance(position(coolPositions, 2), position(coolPositions, 0))
         );
+    });
+
+    test("pushes parents of hot children farther from grand root", () => {
+        const coolPositions = calculateLayout(createChildHeatRepulsionTree(0));
+        const hotChildPositions = calculateLayout(createChildHeatRepulsionTree(1));
+
+        expect(
+            distance(position(hotChildPositions, 2), position(hotChildPositions, 0))
+        ).toBeGreaterThan(distance(position(coolPositions, 2), position(coolPositions, 0)));
     });
 });
