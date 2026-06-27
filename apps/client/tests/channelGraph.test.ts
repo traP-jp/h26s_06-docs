@@ -114,6 +114,19 @@ describe("ChannelGraph dense child emphasis", () => {
 });
 
 describe("ChannelGraph active visibility", () => {
+    test("uses init scores before the first frame update", () => {
+        const channels = createDeepChannels();
+        channels.leaf!.score = 3.4;
+        const graph = new ChannelGraph(channels);
+
+        graph.updateVisibility(undefined, 0);
+
+        expect(graph.get("leaf")!.currentScore).toBe(3.4);
+        expect(graph.get("leaf")!.relativeScore).toBe(1);
+        expect(graph.get("leaf")!.isLayoutActive).toBe(true);
+        expect(graph.get("branch")!.isLayoutActive).toBe(true);
+    });
+
     test("activates hot channels and their ancestors at any depth", () => {
         const graph = new ChannelGraph(createDeepChannels());
         graph.get("leaf")!.relativeScore = 0.09;

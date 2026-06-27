@@ -5,6 +5,7 @@ export interface InitChannel {
     children: string[];
     islandId?: number;
     depth?: number;
+    score?: number;
 }
 
 export type ChannelDictionary = Record<string, InitChannel>;

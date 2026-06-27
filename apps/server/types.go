@@ -90,6 +90,7 @@ type initChannel struct {
 	Children []string `json:"children"`
 	IslandID int      `json:"islandId"`
 	Depth    int      `json:"depth"`
+	Score    float64  `json:"score"`
 }
 
 type sseEvent struct {
@@ -188,7 +189,6 @@ type traqViewer struct {
 type channelData struct {
 	Channels   []traqChannel
 	ChannelIDs map[string]bool
-	InitJSON   []byte
 	State      *stateManager
 }
 

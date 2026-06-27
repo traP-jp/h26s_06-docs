@@ -159,9 +159,16 @@ func prepareChannelTimes(channels map[string]*channel, now time.Time) {
 }
 
 func (sm *stateManager) initPayloadBytes() []byte {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return append([]byte(nil), sm.initJSON...)
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sm.decayScoresLocked(time.Now())
+	data, err := sm.marshalInitPayloadLocked()
+	if err != nil {
+		return append([]byte(nil), sm.initJSON...)
+	}
+	sm.initJSON = data
+	return append([]byte(nil), data...)
 }
 
 func (sm *stateManager) setUserStatus(userID string, channelID string) bool {
@@ -278,14 +285,10 @@ func (sm *stateManager) syncPayload() syncPayload {
 	defer sm.mu.Unlock()
 
 	now := time.Now()
+	sm.decayScoresLocked(now)
+
 	weighted := make([]weightedChannel, 0, len(sm.channels))
 	for _, ch := range sm.channels {
-		decayElapsed := now.Sub(ch.LastDecayTime).Seconds()
-		if decayElapsed > 0 {
-			ch.Score *= math.Exp(-decayElapsed / scoreDecayTimeScale)
-		}
-		ch.LastDecayTime = now
-
 		elapsed := now.Sub(ch.LastSyncTime).Seconds()
 		deltaScore := math.Abs(ch.Score - ch.LastSyncScore)
 		weight := syncPayloadWeight(deltaScore, elapsed)
@@ -298,11 +301,25 @@ func (sm *stateManager) syncPayload() syncPayload {
 		if ch == nil {
 			continue
 		}
-		deltas[ch.ID] = math.Round(ch.Score*10) / 10
+		deltas[ch.ID] = roundedScore(ch.Score)
 		ch.LastSyncScore = ch.Score
 		ch.LastSyncTime = now
 	}
 	return syncPayload{TS: now.Unix(), Deltas: deltas}
+}
+
+func (sm *stateManager) decayScoresLocked(now time.Time) {
+	for _, ch := range sm.channels {
+		decayElapsed := now.Sub(ch.LastDecayTime).Seconds()
+		if decayElapsed > 0 {
+			ch.Score *= math.Exp(-decayElapsed / scoreDecayTimeScale)
+		}
+		ch.LastDecayTime = now
+	}
+}
+
+func roundedScore(score float64) float64 {
+	return math.Round(score*10) / 10
 }
 
 func syncPayloadWeight(deltaScore float64, elapsedSeconds float64) float64 {
@@ -364,6 +381,15 @@ func (sm *stateManager) randomLeafID() string {
 }
 
 func (sm *stateManager) rebuildInitJSONLocked() error {
+	data, err := sm.marshalInitPayloadLocked()
+	if err != nil {
+		return err
+	}
+	sm.initJSON = data
+	return nil
+}
+
+func (sm *stateManager) marshalInitPayloadLocked() ([]byte, error) {
 	payload := initPayload{Channels: make(map[string]initChannel, len(sm.channels))}
 	for id, ch := range sm.channels {
 		children := ch.Children
@@ -377,12 +403,8 @@ func (sm *stateManager) rebuildInitJSONLocked() error {
 			Children: children,
 			IslandID: ch.IslandID,
 			Depth:    ch.Depth,
+			Score:    roundedScore(ch.Score),
 		}
 	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	sm.initJSON = data
-	return nil
+	return json.Marshal(payload)
 }

@@ -157,6 +157,27 @@ func TestStateManagerApplyTriggerSkipsDuplicateMessage(t *testing.T) {
 	}
 }
 
+func TestStateManagerInitPayloadIncludesCurrentScore(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	now := time.Now()
+	state.mu.Lock()
+	state.channels["root"].Score = 1.26
+	state.channels["root"].LastDecayTime = now
+	state.mu.Unlock()
+
+	var payload initPayload
+	if err := json.Unmarshal(state.initPayloadBytes(), &payload); err != nil {
+		t.Fatalf("init payload is invalid JSON: %v", err)
+	}
+	if got := payload.Channels["root"].Score; got != 1.3 {
+		t.Fatalf("root init score = %v, want 1.3", got)
+	}
+}
+
 func TestStateManagerKeepsOnlyRecentMessageIDs(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
 	if err != nil {
