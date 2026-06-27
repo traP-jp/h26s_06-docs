@@ -38,6 +38,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
     select: [id: string | undefined];
+    messageNodeReached: [id: string];
     renderError: [message: string];
 }>();
 const host = useTemplateRef<HTMLDivElement>("host");
@@ -108,7 +109,7 @@ function initialise() {
         scene.add(hierarchyEdges);
         selectionPath = createSelectionPath();
         scene.add(selectionPath);
-        effects = new EffectPool(scene, props.graph);
+        effects = new EffectPool(scene, props.graph, id => emit("messageNodeReached", id));
         composer = new EffectComposer(renderer);
         composer.addPass(new RenderPass(scene, camera));
         composer.addPass(
@@ -488,7 +489,9 @@ function onPointerUp(event: PointerEvent) {
     if (pointerMoved || !renderer || !camera || !nodes) return;
     const bounds = renderer.domElement.getBoundingClientRect();
     const pickedId = pickNodeAt(event.clientX - bounds.left, event.clientY - bounds.top, bounds);
-    emit("select", pickedId === props.selectedId ? undefined : pickedId);
+    const nextSelectedId = pickedId === props.selectedId ? undefined : pickedId;
+
+    emit("select", nextSelectedId);
 }
 
 function pickNodeAt(x: number, y: number, bounds: DOMRect) {
