@@ -47,6 +47,12 @@ func (h *eventHub) publish(event sseEvent) {
 	}
 }
 
+func (h *eventHub) hasSubscribers() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return !h.closed && len(h.clients) > 0
+}
+
 func (h *eventHub) close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()

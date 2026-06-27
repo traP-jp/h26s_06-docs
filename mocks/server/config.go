@@ -10,6 +10,11 @@ import (
 
 // loadConfig は環境変数からアプリ設定を読み込み、未指定時は開発用の既定値を使います。
 func loadConfig() config {
+	mockVertexCount := getEnvInt("MOCK_VERTEX_COUNT", -1)
+	if mockVertexCount == -1 {
+		mockVertexCount = getEnvInt("VERTEX_COUNT", 129)
+	}
+
 	return config{
 		addr:               getEnv("SERVER_ADDR", ":8080"),
 		traqBaseURL:        strings.TrimRight(getEnv("TRAQ_BASE_URL", "https://q.trap.jp"), "/"),
@@ -19,6 +24,7 @@ func loadConfig() config {
 		appOrigin:          getEnv("APP_ORIGIN", "http://localhost:5173"),
 		viewerPollInterval: getEnvDuration("VIEWER_POLL_INTERVAL", 20*time.Second),
 		viewerPollChannels: getEnvInt("VIEWER_POLL_CHANNELS", 40),
+		mockVertexCount:    mockVertexCount,
 	}
 }
 

@@ -102,7 +102,7 @@ func normalizeWeightedChannels(candidates []weightedChannel) []weightedChannel {
 	return normalized
 }
 
-func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, poller *viewerPoller) <-chan viewerSnapshotPayload {
+func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, poller *viewerPoller, hub *eventHub) <-chan viewerSnapshotPayload {
 	out := make(chan viewerSnapshotPayload)
 	go func() {
 		defer close(out)
@@ -110,22 +110,24 @@ func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, 
 		defer ticker.Stop()
 
 		for {
-			snapshot, err := s.fetchViewerSnapshot(ctx, accessToken, poller)
-			if err == nil {
-				traqLogOK(
-					"viewer snapshot sampled=%d totalChannels=%d rows=%d summaries=%d",
-					snapshot.SampledChannels,
-					snapshot.TotalChannels,
-					snapshot.Total,
-					len(snapshot.Channels),
-				)
-				select {
-				case out <- snapshot:
-				case <-ctx.Done():
-					return
+			if hub == nil || hub.hasSubscribers() {
+				snapshot, err := s.fetchViewerSnapshot(ctx, accessToken, poller)
+				if err == nil {
+					traqLogOK(
+						"viewer snapshot sampled=%d totalChannels=%d rows=%d summaries=%d",
+						snapshot.SampledChannels,
+						snapshot.TotalChannels,
+						snapshot.Total,
+						len(snapshot.Channels),
+					)
+					select {
+					case out <- snapshot:
+					case <-ctx.Done():
+						return
+					}
+				} else if ctx.Err() == nil {
+					traqLogWarn("viewer snapshot skipped: %v", err)
 				}
-			} else if ctx.Err() == nil {
-				traqLogWarn("viewer snapshot skipped: %v", err)
 			}
 			select {
 			case <-ctx.Done():

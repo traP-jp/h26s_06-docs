@@ -9,9 +9,9 @@
         "check:fix": "bun run scripts/runChecks.ts fix",
         "check:format": "prettier --check --cache .",
         "check:format:fix": "prettier --write --cache .",
-        "check:lint": "eslint . --cache",
-        "check:lint:fix": "eslint . --fix --cache",
-        "check:type": "vue-tsc --noEmit",
+        "check:lint": "eslint . --max-warnings 0 --cache",
+        "check:lint:fix": "eslint . --fix --max-warnings 0 --cache",
+        "check:type": "vue-tsc --build",
         "dev": "vite",
         "dev:build": "bun run --bun dev --build",
         "husky:prepare": "cd ../../ && husky .husky",
@@ -35,6 +35,8 @@
         "vue": "beta"
     },
     "dependencies": {
+        "d3-force-3d": "^3.0.6",
+        "three": "^0.185.0",
         "vue": "beta"
     },
     "devDependencies": {
@@ -46,6 +48,7 @@
         "@types/css-modules": "^1.0.5",
         "@types/glob": "^9.0.0",
         "@types/node": "^25.5.2",
+        "@types/three": "^0.185.0",
         "@types/ws": "^8.18.1",
         "@vitejs/plugin-vue": "^6.0.7",
         "@vue/tsconfig": "^0.9.1",

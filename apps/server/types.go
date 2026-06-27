@@ -13,6 +13,7 @@ const (
 	maxConcurrentInits   = 10
 	clientEventQueueSize = 64
 	recentMessageIDLimit = 100
+	maxSyncPayloadDeltas = 100
 )
 
 type server struct {
@@ -52,6 +53,7 @@ type channel struct {
 	Score         float64
 	LastSyncScore float64
 	LastSyncTime  time.Time
+	LastDecayTime time.Time
 	LastViewTime  time.Time
 }
 

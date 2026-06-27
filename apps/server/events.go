@@ -49,7 +49,6 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		initPayload = data.InitJSON
 		liveChannelIDs = data.ChannelIDs
 		liveChannels = data.Channels
-		s.startLiveViewerPolling(liveChannels, streamState)
 		s.startLiveSyncProducer(streamState)
 	}
 
@@ -64,6 +63,10 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	events := streamHub.subscribe()
 	defer streamHub.unsubscribe(events)
+
+	if !demo {
+		s.startLiveViewerPolling(liveChannels, streamState)
+	}
 
 	writeSSE(w, marshalEvent("status", map[string]string{"status": streamStatus(demo)}))
 	flusher.Flush()
@@ -206,7 +209,7 @@ func (s *server) consumeTraqStream(ctx context.Context, accessToken string, acti
 
 func (s *server) consumeViewerSnapshots(ctx context.Context, accessToken string, channels []traqChannel, state *stateManager, hub *eventHub) {
 	poller := newViewerPoller(channels, s.cfg.viewerChannelsPerTick, state)
-	for snapshot := range s.streamViewerSnapshots(ctx, accessToken, poller) {
+	for snapshot := range s.streamViewerSnapshots(ctx, accessToken, poller, hub) {
 		hub.publish(marshalEvent("viewers", snapshot))
 	}
 }

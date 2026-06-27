@@ -59,6 +59,7 @@ func newDemoStateManager() (*stateManager, error) {
 		}
 	}
 
+	prepareChannelTimes(channels, now)
 	sm := &stateManager{channels: channels, users: map[string]*userState{}, seenMessageIDs: map[string]struct{}{}}
 	if err := sm.rebuildInitJSONLocked(); err != nil {
 		return nil, err
@@ -117,6 +118,7 @@ func newStateManagerFromTraq(channels []traqChannel) (*stateManager, error) {
 		assignLayout(nodes, rootID, islandID, 1)
 	}
 
+	prepareChannelTimes(nodes, now)
 	sm := &stateManager{channels: nodes, users: map[string]*userState{}, seenMessageIDs: map[string]struct{}{}}
 	if err := sm.rebuildInitJSONLocked(); err != nil {
 		return nil, err
@@ -133,6 +135,17 @@ func assignLayout(channels map[string]*channel, id string, islandID int, depth i
 	ch.Depth = depth
 	for _, childID := range ch.Children {
 		assignLayout(channels, childID, islandID, depth+1)
+	}
+}
+
+func prepareChannelTimes(channels map[string]*channel, now time.Time) {
+	for _, ch := range channels {
+		if ch.LastSyncTime.IsZero() {
+			ch.LastSyncTime = now
+		}
+		if ch.LastDecayTime.IsZero() {
+			ch.LastDecayTime = now
+		}
 	}
 }
 
@@ -224,16 +237,20 @@ func (sm *stateManager) syncPayload() syncPayload {
 	now := time.Now()
 	weighted := make([]weightedChannel, 0, len(sm.channels))
 	for _, ch := range sm.channels {
-		elapsed := now.Sub(ch.LastSyncTime).Seconds()
-		ch.Score *= math.Exp(-elapsed / 24)
+		decayElapsed := now.Sub(ch.LastDecayTime).Seconds()
+		if decayElapsed > 0 {
+			ch.Score *= math.Exp(-decayElapsed / 24)
+		}
+		ch.LastDecayTime = now
 
+		elapsed := now.Sub(ch.LastSyncTime).Seconds()
 		deltaScore := math.Abs(ch.Score - ch.LastSyncScore)
 		weight := syncPayloadWeight(deltaScore, elapsed)
 		weighted = append(weighted, weightedChannel{id: ch.ID, rawWeight: weight})
 	}
 
 	deltas := make(map[string]float64)
-	for _, selected := range selectWeightedChannels(weighted, 1) {
+	for _, selected := range selectWeightedChannels(weighted, maxSyncPayloadDeltas) {
 		ch := sm.channels[selected.id]
 		if ch == nil {
 			continue

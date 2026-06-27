@@ -19,6 +19,7 @@ type config struct {
 	appOrigin          string
 	viewerPollInterval time.Duration
 	viewerPollChannels int
+	mockVertexCount    int
 }
 
 type server struct {
