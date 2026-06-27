@@ -49,9 +49,6 @@ func (s *server) close() {
 }
 
 func (s *server) startAuthCleanup(ctx context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	cleanupCtx, cancel := context.WithCancel(ctx)
 	s.authCleanupCancel = cancel
 

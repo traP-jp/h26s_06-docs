@@ -112,3 +112,20 @@ func TestCleanupExpiredAuthRemovesExpiredStatesAndSessions(t *testing.T) {
 		t.Fatal("active session was removed")
 	}
 }
+
+func TestCleanupExpiredAuthKeepsNeverExpiringSession(t *testing.T) {
+	srv, err := newServer(config{})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	now := time.Now()
+	srv.sessions["never-expiring"] = sessionRecord{
+		token: tokenResponse{AccessToken: "token"},
+	}
+
+	srv.cleanupExpiredAuth(now)
+
+	if _, ok := srv.sessions["never-expiring"]; !ok {
+		t.Fatal("never-expiring session was removed")
+	}
+}

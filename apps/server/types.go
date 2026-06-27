@@ -12,7 +12,7 @@ const (
 	sessionCookieName    = "traq_session"
 	maxConcurrentInits   = 10
 	clientEventQueueSize = 64
-	authCleanupInterval  = time.Minute
+	authCleanupInterval  = 10 * time.Minute
 )
 
 type server struct {
