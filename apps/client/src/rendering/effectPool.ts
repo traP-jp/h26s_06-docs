@@ -26,17 +26,18 @@ interface TimedEffect {
 interface RippleEffect extends TimedEffect {
     mesh: Mesh<RingGeometry, MeshBasicMaterial>;
     baseScale: number;
+    nodeId?: string;
 }
 
 interface BeamEffect extends TimedEffect {
     line: Line<BufferGeometry, LineBasicMaterial>;
-    from: Vector3;
-    to: Vector3;
+    fromId?: string;
+    toId?: string;
 }
 
 interface PulseEffect extends TimedEffect {
     mesh: Mesh<SphereGeometry, MeshBasicMaterial>;
-    points: Vector3[];
+    pathIds?: string[];
 }
 
 const RIPPLE_COUNT = 48;
@@ -44,6 +45,14 @@ const BEAM_COUNT = 32;
 const PULSE_COUNT = 20;
 const BEAM_VERTEX_COUNT = 18;
 const BEAM_TRAIL_PROGRESS = 0.24;
+
+function getNodePosition(node: ChannelNode | undefined, now: number): Vector3 {
+    if (!node) return new Vector3();
+    const wx = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
+    const wy = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
+    const wz = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
+    return new Vector3(node.x + wx, node.y + wy, node.z + wz);
+}
 
 export class EffectPool {
     private readonly ripples: RippleEffect[];
@@ -110,13 +119,12 @@ export class EffectPool {
     private playMessage(channelId: string, now: number) {
         const path = this.graph.path(channelId);
         if (path.length === 0) return;
-        const points = path.map(nodePosition);
         const pulse = acquire(this.pulses);
         pulse.active = true;
         pulse.startedAt = now;
-        pulse.duration = Math.max(420, points.length * 150);
+        pulse.duration = Math.max(420, path.length * 150);
         pulse.delay = 0;
-        pulse.points = points;
+        pulse.pathIds = path.map(n => n.id);
         pulse.mesh.material.color.set(path.at(-1)?.color ?? "#ffffff");
         pulse.mesh.visible = true;
 
@@ -127,7 +135,8 @@ export class EffectPool {
             ripple.duration = 720;
             ripple.delay = pulse.duration + index * 115;
             ripple.baseScale = node.depth <= 1 ? 7 : 4.5;
-            ripple.mesh.position.copy(nodePosition(node));
+            ripple.nodeId = node.id;
+            ripple.mesh.position.copy(getNodePosition(node, now));
             ripple.mesh.material.color.set(node.color);
             ripple.mesh.visible = false;
         });
@@ -139,12 +148,18 @@ export class EffectPool {
         const to = this.graph.get(toId);
         if (!from || !to) return;
         const beam = acquire(this.beams);
-        beam.from.set(from.x, from.y, from.z);
-        beam.to.set(to.x, to.y, to.z);
+        beam.fromId = fromId;
+        beam.toId = toId;
         setBeamColors(beam, to.color);
         beam.active = true;
         beam.startedAt = now;
-        beam.duration = Math.min(1000, Math.max(420, 360 + beam.from.distanceTo(beam.to) * 1.2));
+
+        const initialFrom = getNodePosition(from, now);
+        const initialTo = getNodePosition(to, now);
+        beam.duration = Math.min(
+            1000,
+            Math.max(420, 360 + initialFrom.distanceTo(initialTo) * 1.2)
+        );
         beam.delay = 0;
         beam.line.visible = true;
     }
@@ -158,6 +173,12 @@ export class EffectPool {
                 ripple.active = false;
                 ripple.mesh.visible = false;
                 continue;
+            }
+            if (ripple.nodeId) {
+                const node = this.graph.get(ripple.nodeId);
+                if (node) {
+                    ripple.mesh.position.copy(getNodePosition(node, now));
+                }
             }
             ripple.mesh.visible = true;
             const scale = ripple.baseScale * (0.25 + progress * 2.8);
@@ -175,6 +196,10 @@ export class EffectPool {
                 beam.line.visible = false;
                 continue;
             }
+
+            const fromPos = getNodePosition(this.graph.get(beam.fromId!), now);
+            const toPos = getNodePosition(this.graph.get(beam.toId!), now);
+
             const travel = Math.max(0, progress) * (1 + BEAM_TRAIL_PROGRESS);
             const head = Math.min(1, travel);
             const tail = Math.max(0, travel - BEAM_TRAIL_PROGRESS);
@@ -184,9 +209,9 @@ export class EffectPool {
                 const point = tail + (head - tail) * ratio;
                 position.setXYZ(
                     index,
-                    beam.from.x + (beam.to.x - beam.from.x) * point,
-                    beam.from.y + (beam.to.y - beam.from.y) * point,
-                    beam.from.z + (beam.to.z - beam.from.z) * point
+                    fromPos.x + (toPos.x - fromPos.x) * point,
+                    fromPos.y + (toPos.y - fromPos.y) * point,
+                    fromPos.z + (toPos.z - fromPos.z) * point
                 );
             }
             position.needsUpdate = true;
@@ -205,7 +230,10 @@ export class EffectPool {
                 pulse.mesh.visible = false;
                 continue;
             }
-            setPositionAlongPath(pulse.mesh.position, pulse.points, Math.max(0, progress));
+            if (pulse.pathIds) {
+                const points = pulse.pathIds.map(id => getNodePosition(this.graph.get(id), now));
+                setPositionAlongPath(pulse.mesh.position, points, Math.max(0, progress));
+            }
             pulse.mesh.material.opacity = Math.sin(Math.max(0, progress) * Math.PI);
         }
     }
@@ -292,10 +320,6 @@ function setBeamColors(beam: BeamEffect, hex: string) {
         colors.setXYZ(index, color.r * intensity, color.g * intensity, color.b * intensity);
     }
     colors.needsUpdate = true;
-}
-
-function nodePosition(node: ChannelNode) {
-    return new Vector3(node.x, node.y, node.z);
 }
 
 function setPositionAlongPath(target: Vector3, points: Vector3[], progress: number) {

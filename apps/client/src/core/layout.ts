@@ -9,7 +9,6 @@ import {
 } from "d3-force-3d";
 import type { SimulationLinkDatum, SimulationNodeDatum } from "d3-force-3d";
 
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const POSITION_COMPONENTS = 3;
 
 export interface LayoutNode {
@@ -18,146 +17,107 @@ export interface LayoutNode {
     children: number[];
     depth: number;
     islandId: number;
+    isLayoutActive: boolean;
+    x: number;
+    y: number;
+    z: number;
 }
 
 interface ForceNode extends SimulationNodeDatum {
     id: number;
     depth: number;
     islandId: number;
+    radius: number;
+}
+
+function pseudoRandom(seed: number) {
+    const x = Math.sin(seed * 9999.99) * 10000;
+    return x - Math.floor(x);
 }
 
 interface ForceLinkDatum extends SimulationLinkDatum<ForceNode> {
     desiredDistance: number;
+    strength: number;
 }
 
 export function calculateLayout(nodes: LayoutNode[]) {
     const positions = new Float32Array(nodes.length * POSITION_COMPONENTS);
     if (nodes.length === 0) return positions;
 
-    const subtreeSizes = calculateSubtreeSizes(nodes);
-    const grandRoot = nodes.find(node => node.parentIndex < 0) ?? nodes[0]!;
-    const roots = grandRoot.children
-        .map(index => nodes[index])
-        .filter((node): node is LayoutNode => node !== undefined);
+    for (const n of nodes) {
+        let { x, y, z } = n;
+        if (n.isLayoutActive && x === 0 && y === 0 && z === 0 && n.parentIndex >= 0) {
+            const p = nodes[n.parentIndex];
+            if (p) {
+                x = p.x + (Math.random() - 0.5) * 10;
+                y = p.y + (Math.random() - 0.5) * 10;
+                z = p.z + (Math.random() - 0.5) * 10;
+            }
+        }
+        setPosition(positions, n.index, x, y, z);
+    }
 
-    placeIslandRoots(roots, subtreeSizes, positions);
-    placeDescendants(nodes, roots, subtreeSizes, positions);
-    runForceSimulation(nodes, roots, positions);
-    return positions;
-}
+    const activeNodes = nodes.filter(n => n.isLayoutActive);
+    if (activeNodes.length === 0) return positions;
 
-function calculateSubtreeSizes(nodes: LayoutNode[]) {
-    const sizes = new Uint32Array(nodes.length);
-    sizes.fill(1);
-    const ordered = [...nodes].sort((left, right) => right.depth - left.depth);
+    const radii = new Float32Array(nodes.length);
+    const ordered = [...activeNodes].sort((a, b) => b.depth - a.depth);
     for (const node of ordered) {
-        if (node.parentIndex >= 0) {
-            sizes[node.parentIndex] = (sizes[node.parentIndex] ?? 1) + (sizes[node.index] ?? 1);
+        const activeChildren = node.children
+            .map(index => nodes[index])
+            .filter((c): c is LayoutNode => c !== undefined && c.isLayoutActive);
+        if (activeChildren.length === 0) {
+            radii[node.index] = 4 + pseudoRandom(node.index) * 6;
+        } else {
+            let sumArea = 0;
+            for (const child of activeChildren) {
+                const r = radii[child.index] ?? 12;
+                const padding = 1 + pseudoRandom(child.index) * 0.15;
+                sumArea += Math.PI * (r * padding) * (r * padding);
+            }
+            radii[node.index] =
+                Math.sqrt(sumArea / Math.PI) * (1.0 + pseudoRandom(node.index) * 0.15) + 4;
         }
     }
-    return sizes;
-}
 
-function placeIslandRoots(roots: LayoutNode[], subtreeSizes: Uint32Array, positions: Float32Array) {
-    const clusterRadii = roots.map(root => 46 + Math.sqrt(subtreeSizes[root.index] ?? 1) * 5.2);
-    const circumference = clusterRadii.reduce((total, radius) => total + radius * 2 + 36, 0);
-    const ringRadius = Math.max(150, circumference / (Math.PI * 2));
-    let angleCursor = -0.45;
-    roots.forEach((root, index) => {
-        const clusterRadius = clusterRadii[index] ?? 46;
-        const angularSpan = (clusterRadius * 2 + 36) / ringRadius;
-        const angle = angleCursor + angularSpan / 2;
-        const radialJitter = (index % 2) * Math.min(45, clusterRadius * 0.18);
-        setPosition(
-            positions,
-            root.index,
-            Math.cos(angle) * (ringRadius + radialJitter),
-            Math.sin(angle) * (ringRadius + radialJitter) * 0.82,
-            Math.sin(angle * 1.7) * Math.min(95, clusterRadius * 0.55)
-        );
-        angleCursor += angularSpan;
+    const islandCount = Math.max(1, ...activeNodes.map(n => n.islandId)) + 1;
+    const islandCenters = Array.from({ length: islandCount }, (_, index) => {
+        const angle = (index / islandCount) * Math.PI * 2;
+        return { x: Math.cos(angle) * 300, y: Math.sin(angle) * 300, z: 0 };
     });
-}
 
-function placeDescendants(
-    nodes: LayoutNode[],
-    roots: LayoutNode[],
-    subtreeSizes: Uint32Array,
-    positions: Float32Array
-) {
-    const queue = [...roots];
-    for (let cursor = 0; cursor < queue.length; cursor += 1) {
-        const parent = queue[cursor];
-        if (!parent || parent.children.length === 0) continue;
-        const parentPosition = readPosition(positions, parent.index);
-        const count = parent.children.length;
-        const depthScale = Math.max(0.42, 0.82 ** Math.max(0, parent.depth - 1));
-        const spread = (34 + Math.sqrt(count) * 10) * depthScale;
-
-        parent.children.forEach((childIndex, siblingIndex) => {
-            const child = nodes[childIndex];
-            if (!child) return;
-            const angle =
-                siblingIndex * GOLDEN_ANGLE + parent.index * 0.731 + child.islandId * 0.37;
-            const diskRadius =
-                spread *
-                Math.sqrt((siblingIndex + 0.72) / Math.max(1, count)) *
-                (0.86 + deterministicNoise(child.index) * 0.28);
-            const subtreeLift = Math.log2(subtreeSizes[child.index] ?? 1) * 1.8;
-            setPosition(
-                positions,
-                child.index,
-                parentPosition.x + Math.cos(angle) * diskRadius,
-                parentPosition.y + Math.sin(angle) * diskRadius * 0.82,
-                parentPosition.z +
-                    Math.sin(angle * 1.43 + child.depth) * diskRadius * 0.34 +
-                    subtreeLift
-            );
-            queue.push(child);
-        });
-    }
-}
-
-function runForceSimulation(nodes: LayoutNode[], roots: LayoutNode[], positions: Float32Array) {
-    const simulationTicks = Math.max(
-        12,
-        Math.min(80, Math.round(900 / Math.sqrt(Math.max(1, nodes.length))))
-    );
-    const islandCenters = new Map(
-        roots.map(root => [root.islandId, readPosition(positions, root.index)])
-    );
-    const forceNodes: ForceNode[] = nodes.map(node => {
-        const position = readPosition(positions, node.index);
-        const isGrandRoot = node.parentIndex < 0;
+    const forceNodes: ForceNode[] = activeNodes.map(node => {
+        const p = readPosition(positions, node.index);
         return {
             id: node.index,
             depth: node.depth,
             islandId: node.islandId,
-            x: position.x,
-            y: position.y,
-            z: position.z,
-            fx: isGrandRoot ? 0 : null,
-            fy: isGrandRoot ? 0 : null,
-            fz: isGrandRoot ? 0 : null,
+            radius: radii[node.index] ?? 12,
+            x: p.x,
+            y: p.y,
+            z: p.z,
         };
     });
-    const links: ForceLinkDatum[] = nodes.flatMap(node =>
-        node.children.map(childIndex => {
-            const source = readPosition(positions, node.index);
-            const target = readPosition(positions, childIndex);
-            return {
-                source: node.index,
-                target: childIndex,
-                desiredDistance:
-                    node.parentIndex < 0
-                        ? Math.hypot(target.x - source.x, target.y - source.y, target.z - source.z)
-                        : Math.max(8, 26 * 0.8 ** Math.max(0, node.depth - 1)),
-            };
-        })
-    );
 
-    const centerFor = (node: ForceNode) => islandCenters.get(node.islandId) ?? { x: 0, y: 0, z: 0 };
-    const islandStrength = (node: ForceNode) => (node.depth <= 1 ? 0.24 : 0.028);
+    const links: ForceLinkDatum[] = [];
+    for (const node of activeNodes) {
+        for (const childIndex of node.children) {
+            const childNode = activeNodes.find(n => n.index === childIndex);
+            if (childNode) {
+                const distanceNoise = 0.65 + pseudoRandom(node.index ^ childIndex) * 0.45;
+                const strengthNoise = 0.3 + pseudoRandom((node.index ^ childIndex) + 1) * 0.6;
+                links.push({
+                    source: node.index,
+                    target: childIndex,
+                    desiredDistance:
+                        ((radii[node.index] ?? 12) + (radii[childIndex] ?? 12)) * distanceNoise,
+                    strength: strengthNoise,
+                });
+            }
+        }
+    }
+
+    const simulationTicks = Math.min(80, Math.max(12, Math.floor(24000 / activeNodes.length)));
 
     const simulation = forceSimulation(forceNodes, 3)
         .force(
@@ -165,40 +125,48 @@ function runForceSimulation(nodes: LayoutNode[], roots: LayoutNode[], positions:
             forceLink<ForceNode, ForceLinkDatum>(links)
                 .id(node => node.id)
                 .distance(link => link.desiredDistance)
-                .strength(link => ((link.source as ForceNode).depth === 0 ? 0.9 : 0.52))
+                .strength(link => link.strength)
                 .iterations(1)
         )
         .force(
             "charge",
             forceManyBody<ForceNode>()
-                .strength(node => (node.depth <= 1 ? -150 : node.depth === 2 ? -38 : -9))
-                .distanceMax(130)
-                .theta(1.1)
+                .strength(node => -8 * node.radius * (0.7 + pseudoRandom(node.id) * 0.6))
+                .distanceMax(600)
+                .theta(1)
         )
         .force(
             "collide",
             forceCollide<ForceNode>()
-                .radius(node => (node.depth <= 1 ? 11 : node.depth === 2 ? 5.5 : 2.4))
-                .strength(0.88)
+                .radius(node => node.radius * (0.8 + pseudoRandom(node.id) * 0.3))
+                .strength(0.8)
                 .iterations(1)
         )
-        .force("island-x", forceX<ForceNode>(node => centerFor(node).x).strength(islandStrength))
-        .force("island-y", forceY<ForceNode>(node => centerFor(node).y).strength(islandStrength))
-        .force("island-z", forceZ<ForceNode>(node => centerFor(node).z).strength(islandStrength))
-        .alpha(1)
-        .alphaDecay(1 - 0.001 ** (1 / simulationTicks))
-        .velocityDecay(0.38)
+        .force(
+            "island-x",
+            forceX<ForceNode>(node => islandCenters[node.islandId]?.x ?? 0).strength(node =>
+                node.depth === 0 ? 0.05 : 0
+            )
+        )
+        .force(
+            "island-y",
+            forceY<ForceNode>(node => islandCenters[node.islandId]?.y ?? 0).strength(node =>
+                node.depth === 0 ? 0.05 : 0
+            )
+        )
+        .force(
+            "island-z",
+            forceZ<ForceNode>(0).strength(node => (node.depth === 0 ? 0.05 : 0))
+        )
         .stop();
 
     simulation.tick(simulationTicks);
+
     for (const node of forceNodes) {
         setPosition(positions, node.id, node.x ?? 0, node.y ?? 0, node.z ?? 0);
     }
-}
 
-function deterministicNoise(index: number) {
-    const value = Math.sin(index * 12.9898 + 78.233) * 43_758.5453;
-    return value - Math.floor(value);
+    return positions;
 }
 
 function setPosition(positions: Float32Array, index: number, x: number, y: number, z: number) {

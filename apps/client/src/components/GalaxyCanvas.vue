@@ -32,7 +32,8 @@ import { EffectPool } from "../rendering/effectPool";
 const props = defineProps<{
     graph: ChannelGraph;
     selectedId?: string;
-    activeOnly?: boolean;
+    focusId?: string;
+    activeOnly: boolean;
 }>();
 const emit = defineEmits<{
     select: [id: string | undefined];
@@ -53,9 +54,10 @@ let cameraTransition:
     | {
           startedAt: number;
           startPosition: Vector3;
-          endPosition: Vector3;
           startTarget: Vector3;
-          endTarget: Vector3;
+          direction: Vector3;
+          distance: number;
+          nodeId: string;
       }
     | undefined;
 let frame = 0;
@@ -125,7 +127,8 @@ function initialise() {
         resizeObserver.observe(element);
         document.addEventListener("visibilitychange", resetFrameClock);
         resize();
-        updateSelection(props.selectedId);
+        updateSelectionPath(props.selectedId);
+        updateCameraTarget(props.focusId);
         frame = requestAnimationFrame(draw);
     } catch {
         emit("renderError", "WebGLを初期化できませんでした");
@@ -157,7 +160,7 @@ function createNodeMesh() {
     }
     mesh.instanceColor?.setUsage(DynamicDrawUsage);
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
+    mesh.frustumCulled = false;
     return mesh;
 }
 
@@ -178,7 +181,8 @@ function createEdges() {
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
     geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-    return new LineSegments(
+    geometry.userData.baseColors = new Float32Array(colors);
+    const lines = new LineSegments(
         geometry,
         new LineBasicMaterial({
             vertexColors: true,
@@ -188,6 +192,61 @@ function createEdges() {
             depthWrite: false,
         })
     );
+    lines.frustumCulled = false;
+    return lines;
+}
+
+function updateEdges(now: number) {
+    if (!hierarchyEdges) return;
+    const positionAttribute = hierarchyEdges.geometry.getAttribute(
+        "position"
+    ) as Float32BufferAttribute;
+    const colorAttribute = hierarchyEdges.geometry.getAttribute("color") as Float32BufferAttribute;
+    const posArray = positionAttribute.array as Float32Array;
+    const colArray = colorAttribute.array as Float32Array;
+    const baseColors = hierarchyEdges.geometry.userData.baseColors as Float32Array;
+
+    let offset = 0;
+    let colOffset = 0;
+
+    for (const node of props.graph.nodes) {
+        if (!node.parentId) continue;
+        const parent = props.graph.get(node.parentId);
+        if (!parent) continue;
+
+        const alpha = Math.min(parent.visibilityAlpha, node.visibilityAlpha);
+
+        const wxParent = Math.sin(now * 0.0008 + parent.index * 1.2) * 1.5;
+        const wyParent = Math.cos(now * 0.0009 + parent.index * 0.8) * 1.5;
+        const wzParent = Math.sin(now * 0.0007 + parent.index * 1.5) * 1.5;
+
+        const wxNode = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
+        const wyNode = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
+        const wzNode = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
+
+        posArray[offset++] = parent.x + wxParent;
+        posArray[offset++] = parent.y + wyParent;
+        posArray[offset++] = parent.z + wzParent;
+        posArray[offset++] = node.x + wxNode;
+        posArray[offset++] = node.y + wyNode;
+        posArray[offset++] = node.z + wzNode;
+
+        colArray[colOffset] = baseColors[colOffset] * alpha;
+        colOffset++;
+        colArray[colOffset] = baseColors[colOffset] * alpha;
+        colOffset++;
+        colArray[colOffset] = baseColors[colOffset] * alpha;
+        colOffset++;
+
+        colArray[colOffset] = baseColors[colOffset] * alpha;
+        colOffset++;
+        colArray[colOffset] = baseColors[colOffset] * alpha;
+        colOffset++;
+        colArray[colOffset] = baseColors[colOffset] * alpha;
+        colOffset++;
+    }
+    positionAttribute.needsUpdate = true;
+    colorAttribute.needsUpdate = true;
 }
 
 function createSelectionPath() {
@@ -205,6 +264,7 @@ function createSelectionPath() {
         })
     );
     line.visible = false;
+    line.frustumCulled = false;
     return line;
 }
 
@@ -219,10 +279,35 @@ function draw(now: number) {
     nodeBuffer.update(props.graph.nodes, now, props.selectedId, props.activeOnly);
     (nodes.instanceMatrix.array as Float32Array).set(nodeBuffer.matrixData);
     nodes.instanceMatrix.needsUpdate = true;
+    updateEdges(now);
+    updateSelectionPathPositions(now);
     if (hierarchyEdges) hierarchyEdges.visible = !props.activeOnly;
     updateCameraTransition(now);
     controls?.update();
     composer.render();
+}
+
+function updateSelectionPathPositions(now: number) {
+    if (!selectionPath || !selectionPath.visible || !props.selectedId) return;
+    const path = props.graph.path(props.selectedId);
+    if (path.length < 2) return;
+
+    const positionAttribute = selectionPath.geometry.getAttribute(
+        "position"
+    ) as Float32BufferAttribute;
+    const posArray = positionAttribute.array as Float32Array;
+    let offset = 0;
+
+    for (const node of path) {
+        const wxNode = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
+        const wyNode = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
+        const wzNode = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
+
+        posArray[offset++] = node.x + wxNode;
+        posArray[offset++] = node.y + wyNode;
+        posArray[offset++] = node.z + wzNode;
+    }
+    positionAttribute.needsUpdate = true;
 }
 
 function resize() {
@@ -242,26 +327,56 @@ function onPointerDown(event: PointerEvent) {
     pointerMoved = false;
 }
 
-function updateSelection(id: string | undefined) {
-    updateSelectionPath(id);
-    if (!id || !camera || !controls) return;
+function updateCameraTarget(id: string | undefined) {
+    if (!camera || !controls) return;
+
+    if (!id) {
+        const direction = camera.position.clone().sub(controls.target);
+        if (direction.lengthSq() < 0.001) direction.set(0, 0, 1);
+        direction.normalize();
+
+        cameraTransition = {
+            startedAt: performance.now(),
+            startPosition: camera.position.clone(),
+            startTarget: controls.target.clone(),
+            direction,
+            distance: 800,
+            nodeId: "grand_root",
+        };
+        return;
+    }
+
     const node = props.graph.get(id);
     if (!node) return;
-    const target = new Vector3(node.x, node.y, node.z);
     const direction = camera.position.clone().sub(controls.target);
     if (direction.lengthSq() < 0.001) direction.set(0, 0, 1);
     direction.normalize();
-    const depthDistance = Math.max(52, 170 - node.depth * 18);
-    const distance = Math.min(
-        depthDistance,
-        Math.max(52, camera.position.distanceTo(controls.target) * 0.48)
-    );
+
+    let descendantsCount = 0;
+    const countTraverse = (idx: number, level: number) => {
+        if (level > 2) return;
+        const n = props.graph.nodes[idx];
+        if (n) {
+            descendantsCount++;
+            for (const c of n.children) countTraverse(c, level + 1);
+        }
+    };
+    for (const childIdx of node.children) {
+        countTraverse(childIdx, 1);
+    }
+
+    const estimatedRadius = Math.max(30, Math.sqrt(descendantsCount) * 16);
+    const requiredDistance = estimatedRadius * 5 + 120;
+
+    const distance = Math.max(requiredDistance, camera.position.distanceTo(controls.target) * 0.7);
+
     cameraTransition = {
         startedAt: performance.now(),
         startPosition: camera.position.clone(),
-        endPosition: target.clone().addScaledVector(direction, distance),
         startTarget: controls.target.clone(),
-        endTarget: target,
+        direction,
+        distance,
+        nodeId: id,
     };
 }
 
@@ -286,12 +401,21 @@ function updateCameraTransition(now: number) {
     if (!cameraTransition || !camera || !controls) return;
     const progress = Math.min(1, (now - cameraTransition.startedAt) / 720);
     const eased = 1 - (1 - progress) ** 3;
-    camera.position.lerpVectors(
-        cameraTransition.startPosition,
-        cameraTransition.endPosition,
-        eased
-    );
-    controls.target.lerpVectors(cameraTransition.startTarget, cameraTransition.endTarget, eased);
+
+    const node = props.graph.get(cameraTransition.nodeId);
+    if (!node) {
+        cameraTransition = undefined;
+        return;
+    }
+
+    const target = new Vector3(node.targetX, node.targetY, node.targetZ);
+    const position = target
+        .clone()
+        .addScaledVector(cameraTransition.direction, cameraTransition.distance);
+
+    camera.position.lerpVectors(cameraTransition.startPosition, position, eased);
+    controls.target.lerpVectors(cameraTransition.startTarget, target, eased);
+
     if (progress >= 1) cameraTransition = undefined;
 }
 
@@ -316,6 +440,8 @@ function pickNodeAt(x: number, y: number, bounds: DOMRect) {
     }[] = [];
 
     for (const node of props.graph.nodes) {
+        if (node.visibilityAlpha < 0.05) continue;
+
         if (
             props.activeOnly &&
             node.currentScore <= 0.08 &&
@@ -408,7 +534,18 @@ watch(
 
 watch(
     () => props.selectedId,
-    id => updateSelection(id)
+    id => {
+        updateSelectionPath(id);
+    },
+    { immediate: true }
+);
+
+watch(
+    () => props.focusId,
+    id => {
+        updateCameraTarget(id);
+    },
+    { immediate: true }
 );
 
 onMounted(initialise);

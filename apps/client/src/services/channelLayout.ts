@@ -34,5 +34,9 @@ function createLayoutInput(nodes: readonly ChannelNode[]): LayoutNode[] {
         children: [...node.children],
         depth: node.depth,
         islandId: node.islandId,
+        isLayoutActive: node.isLayoutActive,
+        x: node.targetX,
+        y: node.targetY,
+        z: node.targetZ,
     }));
 }

@@ -34,14 +34,31 @@ export class NodeBuffer {
                     : node.depth <= 1
                       ? 3
                       : Math.max(0.42, 2.4 * 0.72 ** (node.depth - 1));
-            const scale = (baseScale + heat * 6) * (1 + pulse) * selectedScale * Number(visible);
-            writeMatrix(this.matrixData, index * MATRIX_SIZE, node, scale);
+            const scale =
+                (baseScale + heat * 6) *
+                (1 + pulse) *
+                selectedScale *
+                Number(visible) *
+                node.visibilityAlpha;
+
+            const waverX = Math.sin(now * 0.0008 + index * 1.2) * 1.5;
+            const waverY = Math.cos(now * 0.0009 + index * 0.8) * 1.5;
+            const waverZ = Math.sin(now * 0.0007 + index * 1.5) * 1.5;
+            writeMatrix(this.matrixData, index * MATRIX_SIZE, node, scale, waverX, waverY, waverZ);
             writeColor(this.colorData, index * COLOR_SIZE, node.color, heat);
         }
     }
 }
 
-function writeMatrix(target: Float32Array, offset: number, node: ChannelNode, scale: number) {
+function writeMatrix(
+    target: Float32Array,
+    offset: number,
+    node: ChannelNode,
+    scale: number,
+    wx: number,
+    wy: number,
+    wz: number
+) {
     target[offset] = scale;
     target[offset + 1] = 0;
     target[offset + 2] = 0;
@@ -54,9 +71,9 @@ function writeMatrix(target: Float32Array, offset: number, node: ChannelNode, sc
     target[offset + 9] = 0;
     target[offset + 10] = scale;
     target[offset + 11] = 0;
-    target[offset + 12] = node.x;
-    target[offset + 13] = node.y;
-    target[offset + 14] = node.z;
+    target[offset + 12] = node.x + wx;
+    target[offset + 13] = node.y + wy;
+    target[offset + 14] = node.z + wz;
     target[offset + 15] = 1;
 }
 

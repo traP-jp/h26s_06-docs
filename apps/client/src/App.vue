@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from "vue";
+import { ref, watch } from "vue";
 
 import GalaxyCanvas from "./components/GalaxyCanvas.vue";
 import { useAppState } from "./composables/useAppState";
@@ -64,9 +65,10 @@ onMounted(() => {
             const nextGraph = new ChannelGraph(channels);
             pendingGraph = nextGraph;
             status.value = `${nextGraph.nodes.length.toLocaleString()}チャンネルを配置中`;
+            nextGraph.updateVisibility(selectedId.value);
             const positions = await calculateChannelLayout(nextGraph.nodes);
             if (!mounted || generation !== layoutGeneration) return;
-            nextGraph.applyLayout(positions);
+            nextGraph.applyLayout(positions, true);
             graph.value = nextGraph;
             pendingGraph = undefined;
             connection.value = "open";
@@ -79,12 +81,43 @@ onMounted(() => {
         onSync(payload) {
             (pendingGraph ?? graph.value)?.sync(payload.deltas);
             updatedAt.value = new Date(payload.ts * 1000).toLocaleTimeString("ja-JP");
+            if (graph.value) {
+                const changed = graph.value.updateVisibility(selectedId.value);
+                if (changed) {
+                    const generation = ++layoutGeneration;
+                    calculateChannelLayout(graph.value.nodes).then(positions => {
+                        if (generation === layoutGeneration) {
+                            graph.value?.applyLayout(positions);
+                        }
+                    });
+                }
+            }
         },
         onMalformedEvent(eventName) {
             status.value = `${eventName} イベントを解釈できませんでした`;
         },
     });
     stream.connect();
+});
+
+const focusId = ref<string | undefined>();
+
+watch(selectedId, newId => {
+    if (!graph.value) {
+        focusId.value = newId;
+        return;
+    }
+    const changed = graph.value.updateVisibility(newId);
+    focusId.value = newId; // レイアウト計算を待たずに即座にカメラを移動開始
+
+    if (changed) {
+        const generation = ++layoutGeneration;
+        calculateChannelLayout(graph.value.nodes).then(positions => {
+            if (generation === layoutGeneration) {
+                graph.value?.applyLayout(positions);
+            }
+        });
+    }
 });
 
 onBeforeUnmount(() => {
@@ -102,6 +135,7 @@ onBeforeUnmount(() => {
             v-if="graph"
             :graph="graph"
             :selected-id="selectedId"
+            :focus-id="focusId"
             :active-only="activeOnly"
             @select="selectedId = $event"
             @render-error="renderError = $event"
