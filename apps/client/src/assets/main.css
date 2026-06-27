@@ -512,20 +512,36 @@ dd {
     z-index: 80;
     width: 44px;
     height: 44px;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    background: rgba(10, 16, 28, 0.72);
-    color: white;
-    font-size: 20px;
-    backdrop-filter: blur(12px);
+    display: grid;
+    place-items: center;
+    border: 1px solid rgb(140 190 255 / 16%);
+    background: rgb(5 12 25 / 72%);
+    color: #8ba4c0;
+    backdrop-filter: blur(18px);
     cursor: pointer;
+}
+
+.settingsButton:hover {
+    border-color: rgb(105 215 255 / 38%);
+    color: #ccecff;
+    background: rgb(68 150 210 / 14%);
+}
+
+.settingsButton svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentcolor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
 }
 
 .settingsBackdrop {
     position: fixed;
     inset: 0;
     z-index: 70;
-    background: rgba(0, 0, 0, 0.28);
+    background: rgb(0 0 0 / 38%);
 }
 
 .settingsDrawer {
@@ -537,9 +553,10 @@ dd {
     height: 100vh;
     padding: 24px;
     box-sizing: border-box;
-    background: rgba(9, 14, 24, 0.94);
-    color: white;
-    border-left: 1px solid rgba(255, 255, 255, 0.16);
+    overflow-y: auto;
+    background: rgb(5 12 25 / 94%);
+    color: #eaf3ff;
+    border-left: 1px solid rgb(140 190 255 / 14%);
     backdrop-filter: blur(18px);
     box-shadow: -24px 0 60px rgba(0, 0, 0, 0.35);
 }
@@ -558,30 +575,106 @@ dd {
 .settingsClose {
     width: 36px;
     height: 36px;
-    border-radius: 999px;
-    border: none;
-    background: rgba(255, 255, 255, 0.12);
-    color: white;
+    border: 1px solid rgb(140 190 255 / 13%);
+    background: rgb(5 12 25 / 72%);
+    color: #7187a4;
     font-size: 22px;
     cursor: pointer;
 }
 
 .settingsGroup {
     padding: 18px 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    border-top: 1px solid rgb(140 190 255 / 12%);
 }
 
 .settingsGroup h3 {
     margin: 0 0 16px;
     font-size: 14px;
     font-weight: 700;
+    color: #7187a4;
+    letter-spacing: 0.14em;
 }
 
 .settingsToggle {
     display: flex;
-    gap: 10px;
     align-items: center;
+    min-height: 42px;
+    padding: 0 12px;
+    border: 1px solid rgb(140 190 255 / 12%);
+    background: rgb(5 12 25 / 64%);
     cursor: pointer;
+}
+
+.settingsToggle input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.settingsToggleIcon,
+.volumeLabel label {
+    color: #8ba4c0;
+}
+
+.settingsToggleIcon {
+    display: grid;
+    place-items: center;
+    margin-right: 10px;
+}
+
+.settingsToggleIcon svg,
+.volumeLabel svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentcolor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
+}
+
+.settingsToggleLabel {
+    color: #adcae6;
+    font-size: 12px;
+}
+
+.settingsToggleSwitch {
+    position: relative;
+    width: 34px;
+    height: 18px;
+    margin-left: auto;
+    border: 1px solid rgb(140 190 255 / 20%);
+    border-radius: 999px;
+    background: rgb(3 8 18 / 80%);
+    transition: background 150ms ease;
+}
+
+.settingsToggleSwitch::after {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #7187a4;
+    content: "";
+    transition: transform 150ms ease;
+}
+
+.settingsToggle input:checked ~ .settingsToggleSwitch {
+    border-color: rgb(105 215 255 / 42%);
+    background: rgb(68 150 210 / 24%);
+}
+
+.settingsToggle input:checked ~ .settingsToggleSwitch::after {
+    background: #75caff;
+    box-shadow: 0 0 10px rgb(117 202 255 / 45%);
+    transform: translateX(16px);
+}
+
+.settingsToggle:focus-within {
+    outline: 1px solid #75caff;
+    outline-offset: 2px;
 }
 
 .volumeControl {
@@ -597,27 +690,74 @@ dd {
     font-size: 13px;
 }
 
+.volumeLabel label {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 12px;
+}
+
 .volumeLabel output {
-    opacity: 0.75;
+    color: #7187a4;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11px;
 }
 
 .volumeControl input[type="range"] {
+    height: 18px;
+    margin: 0;
+    appearance: none;
     width: 100%;
-}
-
-.soundTestButtons {
-    display: flex;
-    gap: 10px;
-}
-
-.soundTestButtons button {
-    flex: 1;
-    border: none;
-    border-radius: 10px;
-    padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.12);
-    color: white;
+    background: transparent;
     cursor: pointer;
+}
+
+.volumeControl input[type="range"]::-webkit-slider-runnable-track {
+    height: 3px;
+    background: linear-gradient(
+        to right,
+        #75caff var(--range-progress),
+        rgb(140 190 255 / 14%) var(--range-progress)
+    );
+}
+
+.volumeControl input[type="range"]::-webkit-slider-thumb {
+    width: 12px;
+    height: 12px;
+    margin-top: -4.5px;
+    appearance: none;
+    border: 2px solid #d9edff;
+    border-radius: 50%;
+    background: #75caff;
+    box-shadow: 0 0 10px rgb(117 202 255 / 45%);
+}
+
+.volumeControl input[type="range"]::-moz-range-track {
+    height: 3px;
+    background: rgb(140 190 255 / 14%);
+}
+
+.volumeControl input[type="range"]::-moz-range-progress {
+    height: 3px;
+    background: #75caff;
+}
+
+.volumeControl input[type="range"]::-moz-range-thumb {
+    width: 8px;
+    height: 8px;
+    border: 2px solid #d9edff;
+    border-radius: 50%;
+    background: #75caff;
+    box-shadow: 0 0 10px rgb(117 202 255 / 45%);
+}
+
+.volumeControl input[type="range"]:focus-visible {
+    outline: none;
+}
+
+.volumeControl input[type="range"]:focus-visible::-webkit-slider-thumb {
+    outline: 2px solid #75caff;
+    outline-offset: 3px;
 }
 
 .settings-slide-enter-active,
@@ -647,13 +787,16 @@ dd {
     width: 100%;
     margin-top: 12px;
     padding: 10px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.08);
-    color: white;
+    border: 1px solid rgb(140 190 255 / 16%);
+    background: rgb(97 152 214 / 10%);
+    color: #8ba4c0;
     cursor: pointer;
+    font-size: 10px;
+    letter-spacing: 0.12em;
 }
 
 .resetSettingsButton:hover {
-    background: rgba(255, 255, 255, 0.14);
+    border-color: rgb(105 215 255 / 32%);
+    color: #ccecff;
+    background: rgb(68 150 210 / 14%);
 }
