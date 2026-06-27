@@ -64,9 +64,10 @@ type channel struct {
 }
 
 type userState struct {
-	UserID         string
-	CurrentChannel string
-	LastUpdated    time.Time
+	UserID            string
+	CurrentChannel    string
+	LastViewedChannel string
+	LastUpdated       time.Time
 }
 
 type stateManager struct {

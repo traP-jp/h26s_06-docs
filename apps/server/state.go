@@ -177,6 +177,7 @@ func (sm *stateManager) setUserStatus(userID string, channelID string) bool {
 		sm.users[userID] = user
 	}
 	user.CurrentChannel = channelID
+	user.LastViewedChannel = channelID
 	user.LastUpdated = time.Now()
 	return true
 }
@@ -225,12 +226,16 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 			}
 			if trigger.From == "" {
 				trigger.From = user.CurrentChannel
+				if trigger.From == "" {
+					trigger.From = user.LastViewedChannel
+				}
 			}
-			if trigger.From == trigger.To {
+			if trigger.From == trigger.To || user.LastViewedChannel == trigger.To {
 				debugMov(trigger, toName, toName, "skipped", "user is already in the destination channel", 0)
 				return trigger, false
 			}
 			user.CurrentChannel = trigger.To
+			user.LastViewedChannel = trigger.To
 			user.LastUpdated = time.Now()
 		}
 		if from := sm.channels[trigger.From]; from != nil {

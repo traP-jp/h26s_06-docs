@@ -75,8 +75,36 @@ func TestStateManagerApplyTriggerClearsCurrentChannelWithoutPublishing(t *testin
 	if !ok {
 		t.Fatal("movement after clear was not applied")
 	}
-	if applied.From != "" {
-		t.Fatalf("inferred From = %q, want empty", applied.From)
+	if applied.From != "a" {
+		t.Fatalf("inferred From = %q, want a", applied.From)
+	}
+}
+
+func TestStateManagerApplyTriggerSkipsSameChannelAfterClear(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "a", Name: "a"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "a"}); !ok {
+		t.Fatal("initial movement was not applied")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", From: "a", ClearCurrent: true}); ok {
+		t.Fatal("clear current trigger was published")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "a"}); ok {
+		t.Fatal("same-channel state change was applied as movement")
+	}
+
+	state.mu.RLock()
+	current := state.users["u1"].CurrentChannel
+	lastViewed := state.users["u1"].LastViewedChannel
+	state.mu.RUnlock()
+	if current != "" {
+		t.Fatalf("CurrentChannel = %q, want empty", current)
+	}
+	if lastViewed != "a" {
+		t.Fatalf("LastViewedChannel = %q, want a", lastViewed)
 	}
 }
 
