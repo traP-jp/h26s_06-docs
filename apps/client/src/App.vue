@@ -644,7 +644,15 @@ onBeforeUnmount(() => {
             </button>
             <p class="eyebrow">SELECTED CHANNEL</p>
             <h2>{{ selected.name }}</h2>
-            <p class="details__path">{{ selected.path }}</p>
+            <a
+                v-if="selected.path !== '# '"
+                class="details__path"
+                :href="selected.pathHref"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                {{ selected.path }}
+            </a>
             <dl>
                 <div>
                     <dt>ACTIVITY</dt>
