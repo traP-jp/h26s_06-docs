@@ -22,7 +22,7 @@ func TestHandleLoginUsesAuthorizationCodeFlow(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/login", nil)
 	rec := httptest.NewRecorder()
-	srv.handleLogin(rec, req)
+	srv.routes().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)

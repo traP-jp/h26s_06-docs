@@ -6,25 +6,27 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"time"
+
+	"github.com/labstack/echo/v4"
 )
 
-func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	demo := r.URL.Query().Get("demo") == "1"
+func (s *server) handleEvents(c echo.Context) error {
+	r := c.Request()
+	w := c.Response().Writer
+	demo := c.QueryParam("demo") == "1"
 	var token tokenResponse
 
 	if !demo {
 		var ok bool
 		token, ok = s.sessionToken(r)
 		if !ok {
-			http.Error(w, "not authenticated", http.StatusUnauthorized)
-			return
+			return echoHTTPError(c, "not authenticated", http.StatusUnauthorized)
 		}
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
+		return echoHTTPError(c, "streaming unsupported", http.StatusInternalServerError)
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -42,7 +44,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeSSE(w, marshalEvent("stream-error", map[string]string{"error": err.Error()}))
 			flusher.Flush()
-			return
+			return nil
 		}
 		streamState = data.State
 		streamHub = s.liveHub
@@ -58,7 +60,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		<-s.initTokens
 	case <-r.Context().Done():
-		return
+		return nil
 	}
 
 	events := streamHub.subscribe()
@@ -86,13 +88,13 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
-			return
+			return nil
 		case <-heartbeat.C:
 			_, _ = fmt.Fprint(w, ": keep-alive\n\n")
 			flusher.Flush()
 		case event, ok := <-events:
 			if !ok {
-				return
+				return nil
 			}
 			writeSSE(w, event)
 			flusher.Flush()
