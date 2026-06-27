@@ -35,7 +35,6 @@ func (s *server) handleEvents(c echo.Context) error {
 
 	streamState := s.demoState
 	streamHub := s.demoHub
-	initPayload := streamState.initPayloadBytes()
 	var liveChannelIDs map[string]bool
 	var liveChannels []traqChannel
 
@@ -48,11 +47,12 @@ func (s *server) handleEvents(c echo.Context) error {
 		}
 		streamState = data.State
 		streamHub = s.liveHub
-		initPayload = data.InitJSON
 		liveChannelIDs = data.ChannelIDs
 		liveChannels = data.Channels
 		s.startLiveSyncProducer(streamState)
 	}
+
+	initPayload := streamState.initPayloadBytes()
 
 	select {
 	case s.initTokens <- struct{}{}:

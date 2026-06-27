@@ -59,7 +59,10 @@ export class ChannelGraph {
 
     constructor(channels: ChannelDictionary) {
         const ordered = orderChannels(channels);
+        this.scoreScale = initialScoreScale(ordered);
+
         this.nodes = ordered.map((channel, index) => {
+            const score = sanitizeScore(channel.score);
             this.nodeMap.set(channel.id, index);
             return {
                 index,
@@ -69,9 +72,9 @@ export class ChannelGraph {
                 children: [],
                 islandId: channel.islandId ?? -1,
                 depth: channel.depth ?? 0,
-                currentScore: 0,
-                targetScore: 0,
-                relativeScore: 0,
+                currentScore: score,
+                targetScore: score,
+                relativeScore: Math.min(1, score / this.scoreScale),
                 x: 0,
                 y: 0,
                 z: 0,
@@ -414,6 +417,17 @@ function emphasisRank(index: number, parentIndex: number, generation: number) {
     value = Math.imul(value ^ (value >>> 16), 0x7feb_352d);
     value = Math.imul(value ^ (value >>> 15), 0x846c_a68b);
     return (value ^ (value >>> 16)) >>> 0;
+}
+
+function sanitizeScore(score: number | undefined): number {
+    return typeof score === "number" && Number.isFinite(score) ? Math.max(0, score) : 0;
+}
+
+function initialScoreScale(channels: readonly import("../types/api").InitChannel[]): number {
+    return Math.max(
+        RELATIVE_SCORE_SCALE_FLOOR,
+        ...channels.map(channel => sanitizeScore(channel.score)),
+    );
 }
 
 function orderChannels(channels: ChannelDictionary) {
