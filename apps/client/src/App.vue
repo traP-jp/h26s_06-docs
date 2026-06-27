@@ -41,6 +41,7 @@ const {
 const authState = ref<AuthState>(isDemoMode ? "authenticated" : "checking");
 const currentUser = ref<AuthUser>();
 const focusId = ref<string | undefined>();
+const cameraResetKey = ref(0);
 
 const showLoading = computed(
     () => authState.value !== "error" && authState.value !== "forbidden" && !graph.value
@@ -314,6 +315,12 @@ onBeforeUnmount(() => {
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     if (backgroundTimer) clearInterval(backgroundTimer);
 });
+
+function resetCamera(): void {
+    selectedId.value = undefined;
+    focusId.value = undefined;
+    cameraResetKey.value += 1;
+}
 </script>
 
 <template>
@@ -505,6 +512,7 @@ onBeforeUnmount(() => {
             :selected-id="selectedId"
             :focus-id="focusId"
             :active-only="activeOnly"
+            :camera-reset-key="cameraResetKey"
             @select="selectedId = $event"
             @render-error="renderError = $event"
         />
@@ -629,6 +637,9 @@ onBeforeUnmount(() => {
                 @click="activeOnly = true"
             >
                 ACTIVE
+            </button>
+            <button @click="resetCamera">
+                RESET CAMERA
             </button>
         </div>
 
