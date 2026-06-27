@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 )
@@ -13,6 +14,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize server: %v", err)
 	}
+	srv.startAuthCleanup(context.Background())
 	defer srv.close()
 
 	log.Printf("listening on %s", cfg.addr)

@@ -16,7 +16,7 @@ func newServer(cfg config) (*server, error) {
 		cfg:        cfg,
 		client:     &http.Client{Timeout: 15 * time.Second},
 		states:     map[string]time.Time{},
-		sessions:   map[string]tokenResponse{},
+		sessions:   map[string]sessionRecord{},
 		demoState:  demoState,
 		demoHub:    newEventHub(),
 		liveHub:    newEventHub(),
@@ -41,8 +41,32 @@ func (s *server) close() {
 	if s.demoCancel != nil {
 		s.demoCancel()
 	}
+	if s.authCleanupCancel != nil {
+		s.authCleanupCancel()
+	}
 	s.demoHub.close()
 	s.liveHub.close()
+}
+
+func (s *server) startAuthCleanup(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	s.authCleanupCancel = cancel
+
+	go func() {
+		ticker := time.NewTicker(authCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cleanupCtx.Done():
+				return
+			case <-ticker.C:
+				s.cleanupExpiredAuth(time.Now())
+			}
+		}
+	}()
 }
 
 func (s *server) startDemoProducer() {

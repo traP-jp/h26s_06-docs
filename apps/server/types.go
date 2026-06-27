@@ -12,6 +12,7 @@ const (
 	sessionCookieName    = "traq_session"
 	maxConcurrentInits   = 10
 	clientEventQueueSize = 64
+	authCleanupInterval  = time.Minute
 )
 
 type server struct {
@@ -20,7 +21,7 @@ type server struct {
 
 	authMu   sync.Mutex
 	states   map[string]time.Time
-	sessions map[string]tokenResponse
+	sessions map[string]sessionRecord
 
 	liveMu    sync.Mutex
 	liveReady bool
@@ -33,6 +34,8 @@ type server struct {
 
 	demoOnce   sync.Once
 	demoCancel func()
+
+	authCleanupCancel func()
 }
 
 type channel struct {
@@ -125,6 +128,11 @@ type tokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	Scope        string `json:"scope,omitempty"`
+}
+
+type sessionRecord struct {
+	token     tokenResponse
+	expiresAt time.Time
 }
 
 type traqChannelList struct {
