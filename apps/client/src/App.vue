@@ -316,13 +316,13 @@ watch(selectedId, (newId, oldId) => {
 
     if (changed) {
         const generation = ++layoutGeneration;
-
+        if (isClosingSelection) {
+            audioManager.playClose();
+        }
         calculateChannelLayout(graph.value.nodes).then(positions => {
             if (generation === layoutGeneration) {
                 graph.value?.applyLayout(positions);
-                if (isClosingSelection) {
-                    audioManager.playClose();
-                } else {
+                if (!isClosingSelection) {
                     audioManager.playBloom();
                 }
             }
