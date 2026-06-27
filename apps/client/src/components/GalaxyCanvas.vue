@@ -41,6 +41,9 @@ const emit = defineEmits<{
     renderError: [message: string];
 }>();
 const host = useTemplateRef<HTMLDivElement>("host");
+const selectionPathOpacity = 0.82;
+const rootEdgeColor = "#7b8798";
+const rootEdgeVisualOpacity = 0.26;
 
 let renderer: WebGLRenderer | undefined;
 let scene: Scene | undefined;
@@ -268,12 +271,13 @@ function isGrandRootEdge(node: HierarchyEdgeNode) {
 function createSelectionPath() {
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new Float32BufferAttribute([], 3));
+    geometry.setAttribute("color", new Float32BufferAttribute([], 3));
     const line = new Line(
         geometry,
         new LineBasicMaterial({
-            color: 0xffffff,
+            vertexColors: true,
             transparent: true,
-            opacity: 0.82,
+            opacity: selectionPathOpacity,
             blending: AdditiveBlending,
             depthWrite: false,
             toneMapped: false,
@@ -462,9 +466,25 @@ function updateSelectionPath(id: string | undefined) {
     }
     const positions = path.flatMap(node => [node.x, node.y, node.z]);
     selectionPath.geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    selectionPath.geometry.setAttribute(
+        "color",
+        new Float32BufferAttribute(selectionPathColors(path), 3)
+    );
     selectionPath.geometry.computeBoundingSphere();
-    selectionPath.material.color.set(path.at(-1)?.color ?? "#ffffff");
     selectionPath.visible = true;
+}
+
+function selectionPathColors(path: ChannelGraph["nodes"][number][]) {
+    const colors: number[] = [];
+    const selectedColor = new Color(path.at(-1)?.color ?? "#ffffff");
+    const rootColor = new Color(rootEdgeColor).multiplyScalar(
+        rootEdgeVisualOpacity / selectionPathOpacity
+    );
+    for (const [index, node] of path.entries()) {
+        const color = index === 0 && node.id === "grand_root" ? rootColor : selectedColor;
+        colors.push(color.r, color.g, color.b);
+    }
+    return colors;
 }
 
 function updateCameraTransition(now: number) {
