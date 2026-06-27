@@ -8,6 +8,7 @@ import { ChannelGraph } from "./core/channelGraph";
 import { beginLogin, fetchCurrentUser } from "./services/auth";
 import { calculateChannelLayout } from "./services/channelLayout";
 import { EventStream } from "./services/eventStream";
+import { useKeyboardManager } from "./services/keyboardManager";
 import type { AuthUser } from "./types/api";
 
 type AuthState = "checking" | "authenticated" | "error" | "forbidden";
@@ -37,6 +38,8 @@ const {
     recordTrigger,
     resetActivity,
 } = useAppState();
+
+useKeyboardManager({ selected, selectedId });
 
 const authState = ref<AuthState>(isDemoMode ? "authenticated" : "checking");
 const currentUser = ref<AuthUser>();
