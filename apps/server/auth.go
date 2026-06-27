@@ -87,8 +87,14 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionMaxAge := token.ExpiresIn
+	sessionExpiresAt := time.Now().Add(time.Duration(sessionMaxAge) * time.Second)
+
 	s.authMu.Lock()
-	s.sessions[sessionID] = token
+	s.sessions[sessionID] = authSession{
+		Token:     token,
+		ExpiresAt: sessionExpiresAt,
+	}
 	s.authMu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
@@ -97,7 +103,7 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   max(token.ExpiresIn, int(time.Hour.Seconds())),
+		MaxAge:   sessionMaxAge,
 	})
 	http.Redirect(w, r, s.cfg.appOrigin, http.StatusFound)
 }
@@ -175,8 +181,30 @@ func (s *server) sessionToken(r *http.Request) (tokenResponse, bool) {
 	}
 	s.authMu.Lock()
 	defer s.authMu.Unlock()
-	token, ok := s.sessions[cookie.Value]
-	return token, ok
+	session, ok := s.sessions[cookie.Value]
+	if !ok {
+		return tokenResponse{}, false
+	}
+	if !time.Now().Before(session.ExpiresAt) {
+		delete(s.sessions, cookie.Value)
+		return tokenResponse{}, false
+	}
+	return session.Token, true
+}
+
+func (s *server) cleanupExpiredAuth(now time.Time) {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	for state, expiresAt := range s.states {
+		if !now.Before(expiresAt) {
+			delete(s.states, state)
+		}
+	}
+	for sessionID, session := range s.sessions {
+		if !now.Before(session.ExpiresAt) {
+			delete(s.sessions, sessionID)
+		}
+	}
 }
 
 func (s *server) fetchTraqMe(ctx context.Context, accessToken string) (traqMe, error) {

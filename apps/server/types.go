@@ -12,6 +12,7 @@ const (
 	sessionCookieName    = "traq_session"
 	maxConcurrentInits   = 10
 	clientEventQueueSize = 64
+	authCleanupInterval  = 10 * time.Minute
 	recentMessageIDLimit = 100
 	maxSyncPayloadDeltas = 100
 	userBotCacheLimit    = 1500
@@ -23,7 +24,7 @@ type server struct {
 
 	authMu   sync.Mutex
 	states   map[string]time.Time
-	sessions map[string]tokenResponse
+	sessions map[string]authSession
 
 	userBotMu    sync.Mutex
 	userBotCache map[string]bool
@@ -41,6 +42,7 @@ type server struct {
 	demoCancel        func()
 	liveViewersOnce   sync.Once
 	liveViewersCancel func()
+	authCleanupCancel func()
 	demoSyncOnce      sync.Once
 	demoSyncCancel    func()
 	liveSyncOnce      sync.Once
@@ -137,12 +139,22 @@ type viewerRow struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+type authSession struct {
+	Token     tokenResponse
+	ExpiresAt time.Time
+}
+
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	Scope        string `json:"scope,omitempty"`
+}
+
+type sessionRecord struct {
+	token     tokenResponse
+	expiresAt time.Time
 }
 
 type traqChannelList struct {

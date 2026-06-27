@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 )
 
 func TestHandleLoginUsesAuthorizationCodeFlow(t *testing.T) {
@@ -39,5 +40,27 @@ func TestHandleLoginUsesAuthorizationCodeFlow(t *testing.T) {
 	}
 	if values.Get("state") == "" {
 		t.Fatal("state was empty")
+	}
+}
+
+func TestSessionTokenRejectsExpiredSession(t *testing.T) {
+	srv, err := newServer(config{})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+
+	srv.sessions["expired-session"] = authSession{
+		Token:     tokenResponse{AccessToken: "expired-access-token"},
+		ExpiresAt: time.Now().Add(-time.Second),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "expired-session"})
+
+	if token, ok := srv.sessionToken(req); ok {
+		t.Fatalf("sessionToken returned ok with token %#v, want expired session rejection", token)
+	}
+	if _, ok := srv.sessions["expired-session"]; ok {
+		t.Fatal("expired session was not removed")
 	}
 }

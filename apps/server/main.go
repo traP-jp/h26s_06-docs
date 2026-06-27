@@ -15,6 +15,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize server: %v", err)
 	}
+	srv.startAuthCleanup(context.Background())
 	defer srv.close()
 
 	if cfg.oauthClientID == "" {
