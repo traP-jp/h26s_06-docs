@@ -26,9 +26,9 @@ type server struct {
 	liveReady bool
 	liveData  channelData
 
-	stateMu    sync.RWMutex
-	state      *stateManager
-	hub        *eventHub
+	demoState  *stateManager
+	demoHub    *eventHub
+	liveHub    *eventHub
 	initTokens chan struct{}
 
 	demoOnce   sync.Once
