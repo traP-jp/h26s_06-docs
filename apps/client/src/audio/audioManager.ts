@@ -1,8 +1,8 @@
 import bgmUrl from "./bgm.mp3";
 import bloomUrl from "./bloom.mp3";
+import closeUrl from "./close.mp3";
 import moveUrl from "./move.mp3";
 import postUrl from "./post.mp3";
-import closeUrl from "./close.mp3";
 
 type SfxName = "post" | "move" | "bloom" | "close";
 type AudioName = "bgm" | SfxName;
@@ -46,8 +46,8 @@ const DEFAULT_SETTINGS: AudioSettings = {
 const AUDIO_VOLUME_MULTIPLIERS = {
     bgm: 1.0,
     post: 0.5,
-    move: 0.1,
-    bloom: 2.3,
+    move: 0.4,
+    bloom: 1.8,
     close: 2.3,
 } as const satisfies Record<AudioName, number>;
 
@@ -167,7 +167,13 @@ class AudioManager {
     }
 
     getAllAudioElements(): HTMLAudioElement[] {
-        return [this.bgm, ...this.sfxPools.post, ...this.sfxPools.move, ...this.sfxPools.bloom, ...this.sfxPools.close];
+        return [
+            this.bgm,
+            ...this.sfxPools.post,
+            ...this.sfxPools.move,
+            ...this.sfxPools.bloom,
+            ...this.sfxPools.close,
+        ];
     }
 
     applyMuted(): void {
