@@ -1,3 +1,4 @@
+import { audioManager } from "../audio/audioManager";
 import type { ChannelDictionary, ConnectionState, SyncPayload, TriggerPayload } from "../types/api";
 
 interface EventStreamHandlers {
@@ -32,14 +33,17 @@ export class EventStream {
 
     private open() {
         this.handlers.onState("connecting", "ストリームへ接続中");
+
         const query = this.handlers.demo ? "?demo=1" : "";
         const source = new EventSource(`/api/events${query}`, {
             withCredentials: true,
         });
+
         this.source = source;
 
         source.addEventListener("init", event => {
             const payload = parseEvent<{ channels: ChannelDictionary }>(event);
+
             if (payload) {
                 this.retryCount = 0;
                 this.handlers.onInit(payload.channels);
@@ -47,38 +51,73 @@ export class EventStream {
                 this.handlers.onMalformedEvent?.("init");
             }
         });
+
         source.addEventListener("status", event => {
             const payload = parseEvent<{ status: string }>(event);
             this.handlers.onState("open", payload?.status ?? "接続済み");
         });
+
         source.addEventListener("trigger", event => {
             const payload = parseEvent<TriggerPayload>(event);
-            if (payload) this.handlers.onTrigger(payload);
-            else this.handlers.onMalformedEvent?.("trigger");
+
+            if (!payload) {
+                this.handlers.onMalformedEvent?.("trigger");
+                return;
+            }
+
+            this.playTriggerSound(payload);
+            this.handlers.onTrigger(payload);
         });
+
         source.addEventListener("sync", event => {
             const payload = parseEvent<SyncPayload>(event);
-            if (payload) this.handlers.onSync(payload);
-            else this.handlers.onMalformedEvent?.("sync");
+
+            if (payload) {
+                this.handlers.onSync(payload);
+            } else {
+                this.handlers.onMalformedEvent?.("sync");
+            }
         });
+
         source.addEventListener("stream-error", event => {
             const payload = parseEvent<{ error: string }>(event);
             this.handlers.onState("closed", payload?.error ?? "受信エラー");
         });
+
         source.onerror = async () => {
             if (this.stopped || source !== this.source) return;
+
             source.close();
             this.source = undefined;
+
             if (await this.handlers.onConnectionError?.()) return;
             if (this.stopped || this.source) return;
+
             this.scheduleReconnect();
         };
+    }
+
+    private playTriggerSound(payload: TriggerPayload) {
+        try {
+            if (payload.type === "msg") {
+                audioManager.playPost();
+                return;
+            }
+
+            if (payload.type === "mov") {
+                audioManager.playMove();
+            }
+        } catch (error) {
+            console.warn("効果音の再生に失敗しました", error);
+        }
     }
 
     private scheduleReconnect() {
         const delay = Math.min(30_000, 1000 * 2 ** this.retryCount);
         this.retryCount += 1;
+
         this.handlers.onState("connecting", `${Math.ceil(delay / 1000)}秒後に再接続します`);
+
         this.retryTimer = setTimeout(() => {
             this.retryTimer = undefined;
             if (!this.stopped) this.open();
@@ -88,13 +127,20 @@ export class EventStream {
     private clearConnection() {
         this.source?.close();
         this.source = undefined;
-        if (this.retryTimer) clearTimeout(this.retryTimer);
+
+        if (this.retryTimer) {
+            clearTimeout(this.retryTimer);
+        }
+
         this.retryTimer = undefined;
     }
 }
 
 function parseEvent<T>(event: Event): T | undefined {
-    if (!(event instanceof MessageEvent) || typeof event.data !== "string") return undefined;
+    if (!(event instanceof MessageEvent) || typeof event.data !== "string") {
+        return undefined;
+    }
+
     try {
         return JSON.parse(event.data) as T;
     } catch {
