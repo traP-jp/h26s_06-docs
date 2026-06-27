@@ -91,6 +91,19 @@ func (s *server) startLiveViewerPolling(channels []traqChannel, state *stateMana
 	})
 }
 
+func (s *server) preloadLiveChannelData(ctx context.Context) error {
+	if s.cfg.traqBotAccessToken == "" {
+		traqLogWarn("TRAQ_BOT_ACCESS_TOKEN is empty; live channel tree preload and viewer polling are disabled")
+		return nil
+	}
+	data, err := s.ensureLiveChannelData(ctx, s.cfg.traqBotAccessToken)
+	if err != nil {
+		return err
+	}
+	traqLogOK("live channel tree preloaded channels=%d", len(data.Channels))
+	return nil
+}
+
 func (s *server) ensureLiveChannelData(ctx context.Context, accessToken string) (channelData, error) {
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
