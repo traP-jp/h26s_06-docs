@@ -150,10 +150,10 @@ func (s *server) streamDemoTriggers(ctx context.Context) (<-chan triggerPayload,
 		defer close(out)
 		defer close(errc)
 
-		ticker := time.NewTicker(900 * time.Millisecond)
+		ticker := time.NewTicker(s.cfg.mockActivityInterval)
 		defer ticker.Stop()
 		userChannels := map[string]string{}
-		users := []string{"demo-user-a", "demo-user-b", "demo-user-c", "demo-user-d"}
+		users := mockActivityUsers(s.cfg.mockActivityUsers)
 		count := 0
 
 		for {
@@ -161,12 +161,13 @@ func (s *server) streamDemoTriggers(ctx context.Context) (<-chan triggerPayload,
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				to := s.state.randomChannelID()
-				if count%3 == 0 {
+				usr := users[rand.Intn(len(users))]
+				from := userChannels[usr]
+				to := s.state.randomChannelIDExcept(from)
+				if s.cfg.mockMessageEvery > 0 && count%s.cfg.mockMessageEvery == 0 {
 					out <- triggerPayload{Type: "msg", Ch: to}
 				} else {
-					usr := users[rand.Intn(len(users))]
-					out <- triggerPayload{Type: "mov", Usr: usr, From: userChannels[usr], To: to}
+					out <- triggerPayload{Type: "mov", Usr: usr, From: from, To: to}
 					userChannels[usr] = to
 				}
 				count++
@@ -175,4 +176,15 @@ func (s *server) streamDemoTriggers(ctx context.Context) (<-chan triggerPayload,
 	}()
 
 	return out, errc
+}
+
+func mockActivityUsers(count int) []string {
+	if count < 1 {
+		count = 1
+	}
+	users := make([]string, count)
+	for i := range users {
+		users[i] = fmt.Sprintf("mock-user-%03d", i+1)
+	}
+	return users
 }

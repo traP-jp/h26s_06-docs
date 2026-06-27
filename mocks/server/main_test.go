@@ -135,3 +135,31 @@ func TestNewStateManagerVertexCount(t *testing.T) {
 		}
 	}
 }
+
+func TestMockActivityUsers(t *testing.T) {
+	users := mockActivityUsers(3)
+	want := []string{"mock-user-001", "mock-user-002", "mock-user-003"}
+	if len(users) != len(want) {
+		t.Fatalf("len(users) = %d, want %d", len(users), len(want))
+	}
+	for i := range want {
+		if users[i] != want[i] {
+			t.Fatalf("users[%d] = %q, want %q", i, users[i], want[i])
+		}
+	}
+
+	if got := mockActivityUsers(0); len(got) != 1 {
+		t.Fatalf("mockActivityUsers(0) returned %d users, want 1", len(got))
+	}
+}
+
+func TestRandomChannelIDExceptAvoidsExcludedLeaf(t *testing.T) {
+	sm := newStateManager(20)
+	excluded := sm.randomChannelID()
+
+	for i := 0; i < 20; i++ {
+		if got := sm.randomChannelIDExcept(excluded); got == excluded {
+			t.Fatalf("randomChannelIDExcept(%q) returned excluded channel", excluded)
+		}
+	}
+}

@@ -11,15 +11,18 @@ import (
 const grandRootID = "grand_root"
 
 type config struct {
-	addr               string
-	traqBaseURL        string
-	clientID           string
-	redirectURL        string
-	scope              string
-	appOrigin          string
-	viewerPollInterval time.Duration
-	viewerPollChannels int
-	mockVertexCount    int
+	addr                 string
+	traqBaseURL          string
+	clientID             string
+	redirectURL          string
+	scope                string
+	appOrigin            string
+	viewerPollInterval   time.Duration
+	viewerPollChannels   int
+	mockVertexCount      int
+	mockActivityInterval time.Duration
+	mockActivityUsers    int
+	mockMessageEvery     int
 }
 
 type server struct {

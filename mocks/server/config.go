@@ -16,15 +16,18 @@ func loadConfig() config {
 	}
 
 	return config{
-		addr:               getEnv("SERVER_ADDR", ":8080"),
-		traqBaseURL:        strings.TrimRight(getEnv("TRAQ_BASE_URL", "https://q.trap.jp"), "/"),
-		clientID:           os.Getenv("TRAQ_CLIENT_ID"),
-		redirectURL:        getEnv("TRAQ_REDIRECT_URL", "http://localhost:8080/api/auth/callback"),
-		scope:              getEnv("OAUTH_SCOPE", "read"),
-		appOrigin:          getEnv("APP_ORIGIN", "http://localhost:5173"),
-		viewerPollInterval: getEnvDuration("VIEWER_POLL_INTERVAL", 20*time.Second),
-		viewerPollChannels: getEnvInt("VIEWER_POLL_CHANNELS", 40),
-		mockVertexCount:    mockVertexCount,
+		addr:                 getEnv("SERVER_ADDR", ":8080"),
+		traqBaseURL:          strings.TrimRight(getEnv("TRAQ_BASE_URL", "https://q.trap.jp"), "/"),
+		clientID:             os.Getenv("TRAQ_CLIENT_ID"),
+		redirectURL:          getEnv("TRAQ_REDIRECT_URL", "http://localhost:8080/api/auth/callback"),
+		scope:                getEnv("OAUTH_SCOPE", "read"),
+		appOrigin:            getEnv("APP_ORIGIN", "http://localhost:5173"),
+		viewerPollInterval:   getEnvDuration("VIEWER_POLL_INTERVAL", 20*time.Second),
+		viewerPollChannels:   getEnvInt("VIEWER_POLL_CHANNELS", 40),
+		mockVertexCount:      mockVertexCount,
+		mockActivityInterval: getEnvDuration("MOCK_ACTIVITY_INTERVAL", 350*time.Millisecond),
+		mockActivityUsers:    getEnvInt("MOCK_ACTIVITY_USERS", 80),
+		mockMessageEvery:     getEnvInt("MOCK_MESSAGE_EVERY", 5),
 	}
 }
 

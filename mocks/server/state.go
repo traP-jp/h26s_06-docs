@@ -239,12 +239,16 @@ func (sm *stateManager) syncPayload() syncPayload {
 }
 
 func (sm *stateManager) randomChannelID() string {
+	return sm.randomChannelIDExcept("")
+}
+
+func (sm *stateManager) randomChannelIDExcept(excludedID string) string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
 	candidates := make([]string, 0, len(sm.channels))
 	for id, ch := range sm.channels {
-		if id != grandRootID && len(ch.Children) == 0 {
+		if id != grandRootID && id != excludedID && len(ch.Children) == 0 {
 			candidates = append(candidates, id)
 		}
 	}
