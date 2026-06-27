@@ -40,6 +40,7 @@ interface BeamEffect extends TimedEffect {
 interface PulseEffect extends TimedEffect {
     mesh: Mesh<SphereGeometry, MeshBasicMaterial>;
     pathIds?: string[];
+    nextRevealIndex: number;
 }
 
 const RIPPLE_COUNT = 48;
@@ -63,7 +64,8 @@ export class EffectPool {
 
     constructor(
         private readonly scene: Scene,
-        private readonly graph: ChannelGraph
+        private readonly graph: ChannelGraph,
+        private readonly onMessageNodeReached: (id: string) => void
     ) {
         this.ripples = Array.from({ length: RIPPLE_COUNT }, () => createRipple(scene));
         this.beams = Array.from({ length: BEAM_COUNT }, () => createBeam(scene));
@@ -124,11 +126,13 @@ export class EffectPool {
         audioManager.playMove();
 
         const pulse = acquire(this.pulses);
+        if (pulse.active) this.revealRemainingMessagePath(pulse);
         pulse.active = true;
         pulse.startedAt = now;
         pulse.duration = Math.max(420, path.length * 150);
         pulse.delay = 0;
         pulse.pathIds = path.map(n => n.id);
+        pulse.nextRevealIndex = 0;
         pulse.mesh.material.color.set(path.at(-1)?.color ?? "#ffffff");
         pulse.mesh.visible = true;
 
@@ -235,16 +239,34 @@ export class EffectPool {
             if (!pulse.active) continue;
             const progress = (now - pulse.startedAt - pulse.delay) / pulse.duration;
             if (progress >= 1) {
+                this.revealMessagePathThrough(pulse, 1);
                 pulse.active = false;
                 pulse.mesh.visible = false;
                 continue;
             }
             if (pulse.pathIds) {
+                this.revealMessagePathThrough(pulse, Math.max(0, progress));
                 const points = pulse.pathIds.map(id => getNodePosition(this.graph.get(id), now));
                 setPositionAlongPath(pulse.mesh.position, points, Math.max(0, progress));
             }
             pulse.mesh.material.opacity = Math.sin(Math.max(0, progress) * Math.PI);
         }
+    }
+
+    private revealMessagePathThrough(pulse: PulseEffect, progress: number) {
+        const pathIds = pulse.pathIds;
+        if (!pathIds || pathIds.length === 0) return;
+
+        const reachedIndex = Math.floor(Math.min(1, progress) * (pathIds.length - 1));
+        while (pulse.nextRevealIndex <= reachedIndex) {
+            const id = pathIds[pulse.nextRevealIndex];
+            if (id) this.onMessageNodeReached(id);
+            pulse.nextRevealIndex += 1;
+        }
+    }
+
+    private revealRemainingMessagePath(pulse: PulseEffect) {
+        this.revealMessagePathThrough(pulse, 1);
     }
 }
 
@@ -320,7 +342,7 @@ function createPulse(scene: Scene): PulseEffect {
     );
     mesh.visible = false;
     scene.add(mesh);
-    return { mesh, active: false, startedAt: 0, duration: 0, delay: 0 };
+    return { mesh, active: false, startedAt: 0, duration: 0, delay: 0, nextRevealIndex: 0 };
 }
 
 function acquire<T extends TimedEffect>(pool: T[]) {

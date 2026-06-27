@@ -134,6 +134,19 @@ function resetAudioSettings(): void {
     sfxVolume.value = audioManager.sfxVolume;
 }
 
+function scheduleLayout(targetGraph: ChannelGraph): void {
+    const generation = ++layoutGeneration;
+    calculateChannelLayout(targetGraph.nodes).then(positions => {
+        if (generation === layoutGeneration && graph.value === targetGraph) {
+            targetGraph.applyLayout(positions);
+        }
+    });
+}
+
+function revealMessageNode(id: string): void {
+    graph.value?.revealMessageNode(id);
+}
+
 async function retryAuthentication() {
     if (isDemoMode) return;
     const authenticated = await refreshAuthentication();
@@ -236,7 +249,11 @@ function connectStream() {
         },
 
         onTrigger(trigger) {
-            (pendingGraph ?? graph.value)?.applyTrigger(trigger);
+            const targetGraph = pendingGraph ?? graph.value;
+            const visibilityChanged = targetGraph?.applyTrigger(trigger) ?? false;
+            if (visibilityChanged && targetGraph && targetGraph === graph.value) {
+                scheduleLayout(targetGraph);
+            }
             recordTrigger(trigger);
         },
 
@@ -508,6 +525,7 @@ onBeforeUnmount(() => {
             :focus-id="focusId"
             :active-only="activeOnly"
             @select="selectedId = $event"
+            @message-node-reached="revealMessageNode"
             @render-error="renderError = $event"
         />
 
