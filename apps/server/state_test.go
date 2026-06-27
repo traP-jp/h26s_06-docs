@@ -349,6 +349,70 @@ func TestEnsureLiveChannelDataKeepsDemoAndLiveStateSeparate(t *testing.T) {
 	}
 }
 
+func TestPreloadLiveChannelDataUsesBotToken(t *testing.T) {
+	var gotAuth string
+	hits := 0
+	srv, err := newServer(config{
+		traqBaseURL:        "https://example.test",
+		traqBotAccessToken: "bot-token",
+	})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	srv.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/api/v3/channels" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		gotAuth = r.Header.Get("Authorization")
+		hits++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"public":[{"id":"root","name":"root"}]}`)),
+			Request:    r,
+		}, nil
+	})}
+
+	if err := srv.preloadLiveChannelData(context.Background()); err != nil {
+		t.Fatalf("preloadLiveChannelData returned error: %v", err)
+	}
+	if gotAuth != "Bearer bot-token" {
+		t.Fatalf("Authorization header = %q, want %q", gotAuth, "Bearer bot-token")
+	}
+	if hits != 1 {
+		t.Fatalf("channels endpoint hits = %d, want 1", hits)
+	}
+	if !srv.liveReady {
+		t.Fatal("live channel data was not marked ready")
+	}
+
+	if _, err := srv.ensureLiveChannelData(context.Background(), "user-token"); err != nil {
+		t.Fatalf("ensureLiveChannelData after preload returned error: %v", err)
+	}
+	if hits != 1 {
+		t.Fatalf("channels endpoint hits after cached ensure = %d, want 1", hits)
+	}
+}
+
+func TestPreloadLiveChannelDataSkipsWithoutBotToken(t *testing.T) {
+	srv, err := newServer(config{traqBaseURL: "https://example.test"})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	srv.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request: %s", r.URL.String())
+		return nil, nil
+	})}
+
+	if err := srv.preloadLiveChannelData(context.Background()); err != nil {
+		t.Fatalf("preloadLiveChannelData returned error: %v", err)
+	}
+	if srv.liveReady {
+		t.Fatal("live channel data was marked ready without a bot token")
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

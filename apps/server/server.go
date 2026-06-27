@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 func newServer(cfg config) (*server, error) {
@@ -13,33 +16,58 @@ func newServer(cfg config) (*server, error) {
 	}
 
 	return &server{
-		cfg:        cfg,
-		client:     &http.Client{Timeout: 15 * time.Second},
-		states:     map[string]time.Time{},
-		sessions:   map[string]tokenResponse{},
-		demoState:  demoState,
-		demoHub:    newEventHub(),
-		liveHub:    newEventHub(),
-		initTokens: make(chan struct{}, maxConcurrentInits),
+		cfg:          cfg,
+		client:       &http.Client{Timeout: 15 * time.Second},
+		states:       map[string]time.Time{},
+		sessions:     map[string]authSession{},
+		userBotCache: map[string]bool{},
+		demoState:    demoState,
+		demoHub:      newEventHub(),
+		liveHub:      newEventHub(),
+		initTokens:   make(chan struct{}, maxConcurrentInits),
 	}, nil
 }
 
-func (s *server) routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/auth/login", s.handleLogin)
-	mux.HandleFunc("/api/auth/callback", s.handleCallback)
-	mux.HandleFunc("/api/auth/logout", s.handleLogout)
-	mux.HandleFunc("/api/events", s.handleEvents)
-	mux.HandleFunc("/api/me", s.handleMe)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+func (s *server) routes() *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+
+	e.Use(middleware.Recover())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOriginFunc: func(origin string) (bool, error) {
+			return s.allowedOrigin(origin), nil
+		},
+		AllowHeaders:     []string{echo.HeaderContentType},
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowCredentials: true,
+	}))
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if c.Request().Method == http.MethodOptions {
+				return c.NoContent(http.StatusNoContent)
+			}
+			return next(c)
+		}
 	})
-	return s.withCORS(mux)
+
+	methods := []string{http.MethodGet, http.MethodPost}
+	e.Match(methods, "/api/auth/login", s.handleLogin)
+	e.Match(methods, "/api/auth/callback", s.handleCallback)
+	e.Match(methods, "/api/auth/logout", s.handleLogout)
+	e.Match(methods, "/api/events", s.handleEvents)
+	e.Match(methods, "/api/me", s.handleMe)
+	e.Match(methods, "/healthz", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+	return e
 }
 
 func (s *server) close() {
 	if s.demoCancel != nil {
 		s.demoCancel()
+	}
+	if s.authCleanupCancel != nil {
+		s.authCleanupCancel()
 	}
 	if s.liveViewersCancel != nil {
 		s.liveViewersCancel()
@@ -52,6 +80,24 @@ func (s *server) close() {
 	}
 	s.demoHub.close()
 	s.liveHub.close()
+}
+
+func (s *server) startAuthCleanup(ctx context.Context) {
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	s.authCleanupCancel = cancel
+
+	go func() {
+		ticker := time.NewTicker(authCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cleanupCtx.Done():
+				return
+			case <-ticker.C:
+				s.cleanupExpiredAuth(time.Now())
+			}
+		}
+	}()
 }
 
 func (s *server) startDemoProducer() {
@@ -89,6 +135,19 @@ func (s *server) startLiveViewerPolling(channels []traqChannel, state *stateMana
 		s.liveViewersCancel = cancel
 		go s.consumeViewerSnapshots(ctx, s.cfg.traqBotAccessToken, channels, state, s.liveHub)
 	})
+}
+
+func (s *server) preloadLiveChannelData(ctx context.Context) error {
+	if s.cfg.traqBotAccessToken == "" {
+		traqLogWarn("TRAQ_BOT_ACCESS_TOKEN is empty; live channel tree preload and viewer polling are disabled")
+		return nil
+	}
+	data, err := s.ensureLiveChannelData(ctx, s.cfg.traqBotAccessToken)
+	if err != nil {
+		return err
+	}
+	traqLogOK("live channel tree preloaded channels=%d", len(data.Channels))
+	return nil
 }
 
 func (s *server) ensureLiveChannelData(ctx context.Context, accessToken string) (channelData, error) {

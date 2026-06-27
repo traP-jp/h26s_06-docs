@@ -18,12 +18,12 @@ export function useAppState() {
     const selected = computed(() => {
         const channel = selectedId.value ? graph.value?.get(selectedId.value) : undefined;
         if (!channel) return undefined;
+        const pathNodes = graph.value?.path(channel.id) ?? [];
+        const channelPath = pathNodes.filter(node => node.id !== "grand_root").map(node => node.name).join(" / ");
         return {
             ...channel,
-            path: graph.value
-                ?.path(channel.id)
-                .map(node => node.name)
-                .join(" / "),
+            path: `# ${channelPath}`,
+            pathHref: `https://q.trap.jp/channels/${channelPath.replaceAll(" / ", "/")}`,
         };
     });
 

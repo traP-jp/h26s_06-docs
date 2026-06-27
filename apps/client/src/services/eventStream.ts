@@ -99,11 +99,6 @@ export class EventStream {
 
     private playTriggerSound(payload: TriggerPayload) {
         try {
-            if (payload.type === "msg") {
-                audioManager.playPost();
-                return;
-            }
-
             if (payload.type === "mov") {
                 audioManager.playMove();
             }

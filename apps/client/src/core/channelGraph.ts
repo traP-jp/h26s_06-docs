@@ -53,6 +53,7 @@ export class ChannelGraph {
     readonly nodes: ChannelNode[];
     private readonly nodeMap = new Map<string, number>();
     private readonly visualEvents: VisualEvent[] = [];
+    private readonly pendingMessageRevealIds = new Set<string>();
     private snapNextSync = false;
     private scoreScale = RELATIVE_SCORE_SCALE_FLOOR;
 
@@ -114,6 +115,7 @@ export class ChannelGraph {
 
     applyTrigger(trigger: TriggerPayload) {
         const id = trigger.type === "msg" ? trigger.ch : trigger.to;
+        let visibilityChanged = false;
 
         const getActiveAncestor = (nodeId?: string) => {
             let n = nodeId ? this.get(nodeId) : undefined;
@@ -123,12 +125,12 @@ export class ChannelGraph {
             return n?.id;
         };
 
-        const effectiveCh = getActiveAncestor(trigger.type === "msg" ? trigger.ch : undefined);
         const effectiveFrom = getActiveAncestor(trigger.type === "mov" ? trigger.from : undefined);
         const effectiveTo = getActiveAncestor(trigger.type === "mov" ? trigger.to : undefined);
 
-        if (trigger.type === "msg" && effectiveCh) {
-            this.enqueueVisualEvent({ type: "message", channelId: effectiveCh });
+        if (trigger.type === "msg" && this.get(trigger.ch)) {
+            visibilityChanged = this.prepareMessagePath(trigger.ch);
+            this.enqueueVisualEvent({ type: "message", channelId: trigger.ch });
         } else if (
             trigger.type === "mov" &&
             effectiveFrom &&
@@ -146,6 +148,8 @@ export class ChannelGraph {
             heat *= ANCESTOR_SCORE_FACTOR;
             node = node.parentId ? this.get(node.parentId) : undefined;
         }
+
+        return visibilityChanged;
     }
 
     sync(deltas: Record<string, number>) {
@@ -168,6 +172,11 @@ export class ChannelGraph {
 
     clearVisualEvents() {
         this.visualEvents.length = 0;
+        this.pendingMessageRevealIds.clear();
+    }
+
+    revealMessageNode(id: string) {
+        return this.pendingMessageRevealIds.delete(id);
     }
 
     applyLayout(positions: Float32Array, isInitial = false) {
@@ -206,6 +215,7 @@ export class ChannelGraph {
         } else {
             const path = this.path(selectedId);
             const pathIds = new Set(path.map(p => p.id));
+            for (const id of pathIds) this.pendingMessageRevealIds.delete(id);
 
             for (const id of this.clickedIds) {
                 if (!pathIds.has(id)) {
@@ -254,7 +264,9 @@ export class ChannelGraph {
             }
 
             let shouldBeActive = false;
-            if (node.depth < k) {
+            if (this.pendingMessageRevealIds.has(node.id)) {
+                shouldBeActive = true;
+            } else if (node.depth < k) {
                 shouldBeActive = true;
             } else if (node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD) {
                 shouldBeActive = true;
@@ -278,6 +290,7 @@ export class ChannelGraph {
                         node.targetZ = parent.targetZ;
                     }
                 } else if (!shouldBeActive && node.isLayoutActive) {
+                    this.pendingMessageRevealIds.delete(node.id);
                     const parent = node.parentId ? this.get(node.parentId) : undefined;
                     if (parent) {
                         node.targetX = parent.targetX;
@@ -330,6 +343,27 @@ export class ChannelGraph {
         return emphasizedIds;
     }
 
+    private prepareMessagePath(channelId: string) {
+        let changed = false;
+        for (const node of this.path(channelId)) {
+            if (node.isLayoutActive) continue;
+
+            const parent = node.parentId ? this.get(node.parentId) : undefined;
+            if (parent) {
+                node.x = parent.x;
+                node.y = parent.y;
+                node.z = parent.z;
+                node.targetX = parent.targetX;
+                node.targetY = parent.targetY;
+                node.targetZ = parent.targetZ;
+            }
+            node.isLayoutActive = true;
+            this.pendingMessageRevealIds.add(node.id);
+            changed = true;
+        }
+        return changed;
+    }
+
     update(deltaSeconds: number) {
         const decay = Math.exp(-deltaSeconds / SCORE_DECAY_TIME_SCALE);
         const blend = 1 - Math.exp(-deltaSeconds * 3.5);
@@ -358,7 +392,8 @@ export class ChannelGraph {
             node.y += (node.targetY - node.y) * spatialBlend;
             node.z += (node.targetZ - node.z) * spatialBlend;
 
-            const targetAlpha = node.isLayoutActive ? 1.0 : 0.0;
+            const targetAlpha =
+                node.isLayoutActive && !this.pendingMessageRevealIds.has(node.id) ? 1.0 : 0.0;
             const alphaBlend =
                 targetAlpha < node.visibilityAlpha
                     ? 1 - Math.exp(-deltaSeconds * 24.0) // 素早くフェードアウト

@@ -12,22 +12,22 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/labstack/echo/v4"
 )
 
 type traqMe struct {
 	Name string `json:"name"`
 }
 
-func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleLogin(c echo.Context) error {
 	if s.cfg.oauthClientID == "" {
-		http.Error(w, "TRAQ_CLIENT_ID is not configured", http.StatusServiceUnavailable)
-		return
+		return echoHTTPError(c, "TRAQ_CLIENT_ID is not configured", http.StatusServiceUnavailable)
 	}
 
 	state, err := randomToken(32)
 	if err != nil {
-		http.Error(w, "failed to create state", http.StatusInternalServerError)
-		return
+		return echoHTTPError(c, "failed to create state", http.StatusInternalServerError)
 	}
 
 	s.authMu.Lock()
@@ -41,90 +41,90 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	values.Set("scope", s.cfg.oauthScope)
 	values.Set("state", state)
 
-	http.Redirect(w, r, s.cfg.traqBaseURL+"/api/v3/oauth2/authorize?"+values.Encode(), http.StatusFound)
+	return c.Redirect(http.StatusFound, s.cfg.traqBaseURL+"/api/v3/oauth2/authorize?"+values.Encode())
 }
 
-func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleCallback(c echo.Context) error {
+	r := c.Request()
 	if r.URL.Query().Get("error") != "" {
-		http.Redirect(w, r, s.cfg.appOrigin, http.StatusFound)
-		return
+		return c.Redirect(http.StatusFound, s.cfg.appOrigin)
 	}
 
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	if code == "" || state == "" {
-		http.Error(w, "missing code or state", http.StatusBadRequest)
-		return
+		return echoHTTPError(c, "missing code or state", http.StatusBadRequest)
 	}
 	if !s.consumeOAuthState(state) {
-		http.Error(w, "invalid state", http.StatusBadRequest)
-		return
+		return echoHTTPError(c, "invalid state", http.StatusBadRequest)
 	}
 
 	token, err := s.exchangeAuthorizationCode(r.Context(), code)
 	if err != nil {
 		traqLogError("oauth token exchange failed: %v", err)
-		http.Error(w, "token exchange failed", http.StatusBadGateway)
-		return
+		return echoHTTPError(c, "token exchange failed", http.StatusBadGateway)
 	}
 
 	if len(s.cfg.allowedTraqIDs) > 0 {
 		me, err := s.fetchTraqMe(r.Context(), token.AccessToken)
 		if err != nil {
 			traqLogError("failed to fetch traQ user info: %v", err)
-			http.Error(w, "failed to verify user identity", http.StatusBadGateway)
-			return
+			return echoHTTPError(c, "failed to verify user identity", http.StatusBadGateway)
 		}
 		if !s.cfg.allowedTraqIDs[me.Name] {
-			http.Redirect(w, r, s.cfg.appOrigin+"?error=forbidden", http.StatusFound)
-			return
+			return c.Redirect(http.StatusFound, s.cfg.appOrigin+"?error=forbidden")
 		}
 	}
 
 	sessionID, err := randomToken(32)
 	if err != nil {
-		http.Error(w, "failed to create session", http.StatusInternalServerError)
-		return
+		return echoHTTPError(c, "failed to create session", http.StatusInternalServerError)
 	}
 
+	sessionMaxAge := token.ExpiresIn
+	sessionExpiresAt := time.Now().Add(time.Duration(sessionMaxAge) * time.Second)
+
 	s.authMu.Lock()
-	s.sessions[sessionID] = token
+	s.sessions[sessionID] = authSession{
+		Token:     token,
+		ExpiresAt: sessionExpiresAt,
+	}
 	s.authMu.Unlock()
 
-	http.SetCookie(w, &http.Cookie{
+	c.SetCookie(&http.Cookie{
 		Name:     sessionCookieName,
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   max(token.ExpiresIn, int(time.Hour.Seconds())),
+		MaxAge:   sessionMaxAge,
 	})
-	http.Redirect(w, r, s.cfg.appOrigin, http.StatusFound)
+	return c.Redirect(http.StatusFound, s.cfg.appOrigin)
 }
 
-func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
-	_, ok := s.sessionToken(r)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]bool{
+func (s *server) handleMe(c echo.Context) error {
+	_, ok := s.sessionToken(c.Request())
+	return c.JSON(http.StatusOK, map[string]bool{
 		"authenticated":   ok,
 		"oauthConfigured": s.cfg.oauthClientID != "",
 	})
 }
 
-func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleLogout(c echo.Context) error {
+	r := c.Request()
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		s.authMu.Lock()
 		delete(s.sessions, cookie.Value)
 		s.authMu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{
+	c.SetCookie(&http.Cookie{
 		Name:     sessionCookieName,
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	w.WriteHeader(http.StatusNoContent)
+	return c.NoContent(http.StatusNoContent)
 }
 
 func (s *server) exchangeAuthorizationCode(ctx context.Context, code string) (tokenResponse, error) {
@@ -175,8 +175,30 @@ func (s *server) sessionToken(r *http.Request) (tokenResponse, bool) {
 	}
 	s.authMu.Lock()
 	defer s.authMu.Unlock()
-	token, ok := s.sessions[cookie.Value]
-	return token, ok
+	session, ok := s.sessions[cookie.Value]
+	if !ok {
+		return tokenResponse{}, false
+	}
+	if !time.Now().Before(session.ExpiresAt) {
+		delete(s.sessions, cookie.Value)
+		return tokenResponse{}, false
+	}
+	return session.Token, true
+}
+
+func (s *server) cleanupExpiredAuth(now time.Time) {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	for state, expiresAt := range s.states {
+		if !now.Before(expiresAt) {
+			delete(s.states, state)
+		}
+	}
+	for sessionID, session := range s.sessions {
+		if !now.Before(session.ExpiresAt) {
+			delete(s.sessions, sessionID)
+		}
+	}
 }
 
 func (s *server) fetchTraqMe(ctx context.Context, accessToken string) (traqMe, error) {

@@ -308,8 +308,14 @@ dd {
 .details__path {
     margin: 8px 0 0;
     color: #7187a4;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.6;
+    text-decoration: none;
+}
+
+.details__path:hover {
+    color: #adcae6;
+    text-decoration: underline;
 }
 
 .details dl {
