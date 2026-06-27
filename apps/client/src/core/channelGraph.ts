@@ -175,7 +175,7 @@ export class ChannelGraph {
         let heat = trigger.type === "msg" ? MESSAGE_SCORE_AMOUNT : MOVEMENT_SCORE_AMOUNT;
         while (node) {
             node.currentScore += heat;
-            node.targetScore = Math.max(node.targetScore, node.currentScore * 0.62);
+            node.targetScore += heat;
             heat *= ANCESTOR_SCORE_FACTOR;
             node = node.parentId ? this.get(node.parentId) : undefined;
         }
@@ -184,12 +184,26 @@ export class ChannelGraph {
     }
 
     sync(deltas: Record<string, number>) {
+        const comparisons: {
+            channelId: string;
+            clientValue: number;
+            trueValue: number;
+            difference: number;
+        }[] = [];
+
         for (const [id, score] of Object.entries(deltas)) {
             const node = this.get(id);
             if (!node) continue;
+            comparisons.push({
+                channelId: id,
+                clientValue: node.currentScore,
+                trueValue: score,
+                difference: score - node.currentScore,
+            });
             node.targetScore = score;
             if (this.snapNextSync) node.currentScore = score;
         }
+        console.table(comparisons);
         this.snapNextSync = false;
     }
 
@@ -403,8 +417,8 @@ export class ChannelGraph {
         let observedMaxScore = RELATIVE_SCORE_SCALE_FLOOR;
         for (const node of this.nodes) {
             node.currentScore *= decay;
-            node.currentScore += (node.targetScore - node.currentScore) * blend;
             node.targetScore *= decay;
+            node.currentScore += (node.targetScore - node.currentScore) * blend;
             if (node.currentScore < 0.01) node.currentScore = 0;
             if (node.targetScore < 0.01) node.targetScore = 0;
             observedMaxScore = Math.max(observedMaxScore, node.currentScore, node.targetScore);
@@ -466,7 +480,7 @@ function sanitizeScore(score: number | undefined): number {
 function initialScoreScale(channels: readonly import("../types/api").InitChannel[]): number {
     return Math.max(
         RELATIVE_SCORE_SCALE_FLOOR,
-        ...channels.map(channel => sanitizeScore(channel.score)),
+        ...channels.map(channel => sanitizeScore(channel.score))
     );
 }
 

@@ -195,8 +195,8 @@ func TestStateManagerInitPayloadIncludesCurrentScore(t *testing.T) {
 	if err := json.Unmarshal(state.initPayloadBytes(), &payload); err != nil {
 		t.Fatalf("init payload is invalid JSON: %v", err)
 	}
-	if got := payload.Channels["root"].Score; got != 1.3 {
-		t.Fatalf("root init score = %v, want 1.3", got)
+	if got := payload.Channels["root"].Score; got != 1.26 {
+		t.Fatalf("root init score = %v, want 1.26", got)
 	}
 }
 
@@ -317,6 +317,26 @@ func TestStateManagerSyncPayloadCapsDeltasAtOneHundred(t *testing.T) {
 	payload := state.syncPayload()
 	if len(payload.Deltas) != maxSyncPayloadDeltas {
 		t.Fatalf("sync deltas = %d, want %d", len(payload.Deltas), maxSyncPayloadDeltas)
+	}
+}
+
+func TestRoundedScoreUsesThreeDecimalPlaces(t *testing.T) {
+	tests := []struct {
+		name  string
+		score float64
+		want  float64
+	}{
+		{name: "rounds down", score: 1.2344, want: 1.234},
+		{name: "rounds up", score: 1.2345, want: 1.235},
+		{name: "keeps three decimal places", score: 0.123, want: 0.123},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := roundedScore(tt.score); got != tt.want {
+				t.Fatalf("roundedScore(%v) = %v, want %v", tt.score, got, tt.want)
+			}
+		})
 	}
 }
 

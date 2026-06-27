@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import { ChannelGraph } from "../src/core/channelGraph";
 import type { ChannelDictionary } from "../src/types/api";
+
+afterEach(() => {
+    mock.restore();
+});
 
 function createDenseChannels(): ChannelDictionary {
     const channels: ChannelDictionary = {
@@ -166,6 +170,45 @@ describe("ChannelGraph active visibility", () => {
         graph.update(1);
 
         expect(graph.get("nested")!.visibilityAlpha).toBeGreaterThan(0);
+    });
+});
+
+describe("ChannelGraph score sync", () => {
+    test("keeps trigger prediction aligned with the server score calculation", () => {
+        const channels = createDeepChannels();
+        channels.leaf!.score = 1.25;
+        const graph = new ChannelGraph(channels);
+
+        graph.applyTrigger({ type: "msg", ch: "leaf" });
+
+        expect(graph.get("leaf")!.currentScore).toBe(2.25);
+        expect(graph.get("leaf")!.targetScore).toBe(2.25);
+        expect(graph.get("branch")!.currentScore).toBe(0.45);
+        expect(graph.get("branch")!.targetScore).toBe(0.45);
+
+        graph.update(10);
+        const decay = Math.exp(-10 / 300);
+        expect(graph.get("leaf")!.currentScore).toBeCloseTo(2.25 * decay);
+        expect(graph.get("leaf")!.targetScore).toBeCloseTo(2.25 * decay);
+    });
+
+    test("logs client values, true values, and their differences before syncing", () => {
+        const channels = createDeepChannels();
+        channels.leaf!.score = 1.25;
+        const graph = new ChannelGraph(channels);
+        const table = spyOn(console, "table").mockImplementation(() => {});
+
+        graph.sync({ leaf: 2, unknown: 10 });
+
+        expect(table).toHaveBeenCalledWith([
+            {
+                channelId: "leaf",
+                clientValue: 1.25,
+                trueValue: 2,
+                difference: 0.75,
+            },
+        ]);
+        expect(graph.get("leaf")!.targetScore).toBe(2);
     });
 });
 

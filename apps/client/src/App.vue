@@ -88,16 +88,6 @@ function unlockAudio(): void {
     audioManager.unlock();
 }
 
-function toggleSettings(): void {
-    if (authState.value !== "authenticated") return;
-
-    if (settingsOpen.value) {
-        closeSettings();
-    } else {
-        openSettings();
-    }
-}
-
 function openSettings(): void {
     audioManager.unlock({ startBgm: false });
     settingsOpen.value = true;
@@ -157,8 +147,8 @@ useKeyboardManager({
     muted,
     settingsOpen,
     onMuteToggle: toggleMuted,
+    onSettingsOpen: openSettings,
     onSettingsClose: closeSettings,
-    onSettingsToggle: toggleSettings,
 });
 
 function scheduleLayout(targetGraph: ChannelGraph): void {

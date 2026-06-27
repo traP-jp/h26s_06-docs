@@ -395,7 +395,7 @@ func (sm *stateManager) decayScoresLocked(now time.Time) {
 }
 
 func roundedScore(score float64) float64 {
-	return math.Round(score*10) / 10
+	return math.Round(score*1000) / 1000
 }
 
 func syncPayloadWeight(deltaScore float64, elapsedSeconds float64) float64 {
