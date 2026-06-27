@@ -235,6 +235,16 @@ export class ChannelGraph {
             }
         }
 
+        const scoreActiveAncestorIds = new Set<string>();
+        for (const node of this.nodes) {
+            if (node.relativeScore <= ACTIVE_RELATIVE_SCORE_THRESHOLD) continue;
+            let parent = node.parentId ? this.get(node.parentId) : undefined;
+            while (parent) {
+                scoreActiveAncestorIds.add(parent.id);
+                parent = parent.parentId ? this.get(parent.parentId) : undefined;
+            }
+        }
+
         const emphasizedIds = this.pickDenseChildren(requiredEmphasisIds);
         for (const node of this.nodes) {
             const isExpansionOrigin = node.id === selectedId && node.children.length > 0;
@@ -247,6 +257,8 @@ export class ChannelGraph {
             if (node.depth < k) {
                 shouldBeActive = true;
             } else if (node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD) {
+                shouldBeActive = true;
+            } else if (scoreActiveAncestorIds.has(node.id)) {
                 shouldBeActive = true;
             } else if (activePaths.has(node.id)) {
                 shouldBeActive = true;

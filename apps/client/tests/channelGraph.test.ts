@@ -107,12 +107,15 @@ describe("ChannelGraph dense child emphasis", () => {
 });
 
 describe("ChannelGraph active visibility", () => {
-    test("activates hot channels at any depth", () => {
+    test("activates hot channels and their ancestors at any depth", () => {
         const graph = new ChannelGraph(createDeepChannels());
         graph.get("leaf")!.relativeScore = 0.09;
 
-        graph.updateVisibility(undefined, 1);
+        graph.updateVisibility(undefined, 0);
 
         expect(graph.get("leaf")!.isLayoutActive).toBe(true);
+        expect(graph.get("branch")!.isLayoutActive).toBe(true);
+        expect(graph.get("root")!.isLayoutActive).toBe(true);
+        expect(graph.get("grand_root")!.isLayoutActive).toBe(true);
     });
 });
