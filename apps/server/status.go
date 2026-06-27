@@ -22,7 +22,7 @@ func (r statusRequest) channelID() (string, bool) {
 }
 
 func (s *server) handleStatus(c echo.Context) error {
-	token, ok := s.sessionToken(c.Request())
+	sessionID, session, ok := s.session(c.Request())
 	if !ok {
 		return echoHTTPError(c, "not authenticated", http.StatusUnauthorized)
 	}
@@ -49,14 +49,10 @@ func (s *server) handleStatus(c echo.Context) error {
 		return echoHTTPError(c, "unknown channel", http.StatusBadRequest)
 	}
 
-	me, err := s.fetchTraqMe(c.Request().Context(), token.AccessToken)
+	userID, err := s.ensureSessionTraqUserID(c.Request().Context(), sessionID, session)
 	if err != nil {
 		traqLogError("failed to fetch traQ user info for status update: %v", err)
 		return echoHTTPError(c, "failed to fetch user info", http.StatusBadGateway)
-	}
-	userID := me.ID
-	if userID == "" {
-		userID = me.Name
 	}
 	if channelID == "" {
 		data.State.clearUserStatus(userID)

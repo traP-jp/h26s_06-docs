@@ -145,8 +145,9 @@ type viewerRow struct {
 }
 
 type authSession struct {
-	Token     tokenResponse
-	ExpiresAt time.Time
+	Token      tokenResponse
+	ExpiresAt  time.Time
+	TraqUserID string
 }
 
 type tokenResponse struct {

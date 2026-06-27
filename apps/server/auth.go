@@ -66,16 +66,17 @@ func (s *server) handleCallback(c echo.Context) error {
 		return echoHTTPError(c, "token exchange failed", http.StatusBadGateway)
 	}
 
+	me, err := s.fetchTraqMe(r.Context(), token.AccessToken)
+	if err != nil {
+		traqLogError("failed to fetch traQ user info: %v", err)
+		return echoHTTPError(c, "failed to fetch user info", http.StatusBadGateway)
+	}
 	if len(s.cfg.allowedTraqIDs) > 0 {
-		me, err := s.fetchTraqMe(r.Context(), token.AccessToken)
-		if err != nil {
-			traqLogError("failed to fetch traQ user info: %v", err)
-			return echoHTTPError(c, "failed to verify user identity", http.StatusBadGateway)
-		}
 		if !s.cfg.allowedTraqIDs[me.Name] {
 			return c.Redirect(http.StatusFound, s.cfg.appOrigin+"?error=forbidden")
 		}
 	}
+	traqUserID := me.userID()
 
 	sessionID, err := randomToken(32)
 	if err != nil {
@@ -87,8 +88,9 @@ func (s *server) handleCallback(c echo.Context) error {
 
 	s.authMu.Lock()
 	s.sessions[sessionID] = authSession{
-		Token:     token,
-		ExpiresAt: sessionExpiresAt,
+		Token:      token,
+		ExpiresAt:  sessionExpiresAt,
+		TraqUserID: traqUserID,
 	}
 	s.authMu.Unlock()
 
@@ -170,21 +172,54 @@ func (s *server) consumeOAuthState(state string) bool {
 }
 
 func (s *server) sessionToken(r *http.Request) (tokenResponse, bool) {
+	_, session, ok := s.session(r)
+	if !ok {
+		return tokenResponse{}, false
+	}
+	return session.Token, true
+}
+
+func (s *server) session(r *http.Request) (string, authSession, bool) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
 	s.authMu.Lock()
 	defer s.authMu.Unlock()
 	session, ok := s.sessions[cookie.Value]
 	if !ok {
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
 	if !time.Now().Before(session.ExpiresAt) {
 		delete(s.sessions, cookie.Value)
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
-	return session.Token, true
+	return cookie.Value, session, true
+}
+
+func (s *server) ensureSessionTraqUserID(ctx context.Context, sessionID string, session authSession) (string, error) {
+	if session.TraqUserID != "" {
+		return session.TraqUserID, nil
+	}
+
+	me, err := s.fetchTraqMe(ctx, session.Token.AccessToken)
+	if err != nil {
+		return "", err
+	}
+	userID := me.userID()
+
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	current, ok := s.sessions[sessionID]
+	if !ok || !time.Now().Before(current.ExpiresAt) {
+		return userID, nil
+	}
+	if current.TraqUserID != "" {
+		return current.TraqUserID, nil
+	}
+	current.TraqUserID = userID
+	s.sessions[sessionID] = current
+	return userID, nil
 }
 
 func (s *server) cleanupExpiredAuth(now time.Time) {
@@ -227,6 +262,13 @@ func (s *server) fetchTraqMe(ctx context.Context, accessToken string) (traqMe, e
 		return traqMe{}, errors.New("users/me did not return id or name")
 	}
 	return me, nil
+}
+
+func (me traqMe) userID() string {
+	if me.ID != "" {
+		return me.ID
+	}
+	return me.Name
 }
 
 func randomToken(size int) (string, error) {

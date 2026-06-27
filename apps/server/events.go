@@ -14,11 +14,12 @@ func (s *server) handleEvents(c echo.Context) error {
 	r := c.Request()
 	w := c.Response().Writer
 	demo := c.QueryParam("demo") == "1"
-	var token tokenResponse
+	var sessionID string
+	var session authSession
 
 	if !demo {
 		var ok bool
-		token, ok = s.sessionToken(r)
+		sessionID, session, ok = s.session(r)
 		if !ok {
 			return echoHTTPError(c, "not authenticated", http.StatusUnauthorized)
 		}
@@ -40,7 +41,7 @@ func (s *server) handleEvents(c echo.Context) error {
 	var currentUserID string
 
 	if !demo {
-		data, err := s.ensureLiveChannelData(r.Context(), token.AccessToken)
+		data, err := s.ensureLiveChannelData(r.Context(), session.Token.AccessToken)
 		if err != nil {
 			writeSSE(w, marshalEvent("stream-error", map[string]string{"error": err.Error()}))
 			flusher.Flush()
@@ -50,15 +51,11 @@ func (s *server) handleEvents(c echo.Context) error {
 		streamHub = s.liveHub
 		initPayload = data.InitJSON
 		liveChannelIDs = data.ChannelIDs
-		me, err := s.fetchTraqMe(r.Context(), token.AccessToken)
+		currentUserID, err = s.ensureSessionTraqUserID(r.Context(), sessionID, session)
 		if err != nil {
 			writeSSE(w, marshalEvent("stream-error", map[string]string{"error": err.Error()}))
 			flusher.Flush()
 			return nil
-		}
-		currentUserID = me.ID
-		if currentUserID == "" {
-			currentUserID = me.Name
 		}
 		s.startLiveSyncProducer(streamState)
 	}
@@ -85,8 +82,8 @@ func (s *server) handleEvents(c echo.Context) error {
 		s.startDemoProducer()
 		s.startDemoSyncProducer()
 	} else {
-		viewerEvents = s.streamCurrentViewerEvents(ctx, token.AccessToken, currentUserID, streamState, liveChannelIDs)
-		go s.consumeTraqStream(ctx, token.AccessToken, liveChannelIDs, streamState, streamHub)
+		viewerEvents = s.streamCurrentViewerEvents(ctx, session.Token.AccessToken, currentUserID, streamState, liveChannelIDs)
+		go s.consumeTraqStream(ctx, session.Token.AccessToken, liveChannelIDs, streamState, streamHub)
 	}
 
 	heartbeat := time.NewTicker(25 * time.Second)
