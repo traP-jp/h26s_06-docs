@@ -1,16 +1,25 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net/http"
 )
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "Hello, Go Web App!")
-}
-
 func main() {
-	http.HandleFunc("/", handler)
-	fmt.Println("Server status: Running on http://localhost:8080")
-	http.ListenAndServe(":8080", nil)
+	loadDotEnv(".env")
+
+	cfg := loadConfig()
+	srv, err := newServer(cfg)
+	if err != nil {
+		log.Fatalf("initialize server: %v", err)
+	}
+	defer srv.close()
+
+	log.Printf("listening on %s", cfg.addr)
+	if cfg.oauthClientID == "" {
+		log.Printf("TRAQ_CLIENT_ID is empty; live mode OAuth is disabled")
+	}
+	if err := http.ListenAndServe(cfg.addr, logRequests(srv.routes())); err != nil {
+		log.Fatal(err)
+	}
 }
