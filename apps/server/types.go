@@ -36,6 +36,10 @@ type server struct {
 	demoCancel        func()
 	liveViewersOnce   sync.Once
 	liveViewersCancel func()
+	demoSyncOnce      sync.Once
+	demoSyncCancel    func()
+	liveSyncOnce      sync.Once
+	liveSyncCancel    func()
 }
 
 type channel struct {

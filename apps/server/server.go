@@ -44,6 +44,12 @@ func (s *server) close() {
 	if s.liveViewersCancel != nil {
 		s.liveViewersCancel()
 	}
+	if s.demoSyncCancel != nil {
+		s.demoSyncCancel()
+	}
+	if s.liveSyncCancel != nil {
+		s.liveSyncCancel()
+	}
 	s.demoHub.close()
 	s.liveHub.close()
 }
@@ -53,6 +59,22 @@ func (s *server) startDemoProducer() {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.demoCancel = cancel
 		go s.runDemoProducer(ctx, s.demoState, s.demoHub)
+	})
+}
+
+func (s *server) startDemoSyncProducer() {
+	s.demoSyncOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.demoSyncCancel = cancel
+		go s.runSyncProducer(ctx, s.demoState, s.demoHub)
+	})
+}
+
+func (s *server) startLiveSyncProducer(state *stateManager) {
+	s.liveSyncOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.liveSyncCancel = cancel
+		go s.runSyncProducer(ctx, state, s.liveHub)
 	})
 }
 

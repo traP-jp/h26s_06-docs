@@ -50,6 +50,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		liveChannelIDs = data.ChannelIDs
 		liveChannels = data.Channels
 		s.startLiveViewerPolling(liveChannels, streamState)
+		s.startLiveSyncProducer(streamState)
 	}
 
 	select {
@@ -71,13 +72,12 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if demo {
 		s.startDemoProducer()
+		s.startDemoSyncProducer()
 	} else {
 		go s.consumeTraqStream(ctx, token.AccessToken, liveChannelIDs, streamState, streamHub)
 	}
 
-	syncTicker := time.NewTicker(s.cfg.syncInterval)
 	heartbeat := time.NewTicker(25 * time.Second)
-	defer syncTicker.Stop()
 	defer heartbeat.Stop()
 
 	for {
@@ -87,18 +87,29 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			_, _ = fmt.Fprint(w, ": keep-alive\n\n")
 			flusher.Flush()
-		case <-syncTicker.C:
-			payload := streamState.syncPayload()
-			if len(payload.Deltas) > 0 {
-				writeSSE(w, marshalEvent("sync", payload))
-				flusher.Flush()
-			}
 		case event, ok := <-events:
 			if !ok {
 				return
 			}
 			writeSSE(w, event)
 			flusher.Flush()
+		}
+	}
+}
+
+func (s *server) runSyncProducer(ctx context.Context, state *stateManager, hub *eventHub) {
+	ticker := time.NewTicker(s.cfg.syncInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			payload := state.syncPayload()
+			if len(payload.Deltas) > 0 {
+				hub.publish(marshalEvent("sync", payload))
+			}
 		}
 	}
 }
