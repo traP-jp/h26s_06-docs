@@ -104,9 +104,11 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 				continue
 			}
 			triggers = append(triggers, triggerPayload{
-				Type: "mov",
-				Usr:  hashViewerKey(view.Key),
-				To:   channelID,
+				Type:         "mov",
+				Usr:          hashViewerKey(view.Key),
+				To:           channelID,
+				Source:       "ws",
+				SourceDetail: "traQ /api/v3/ws timeline_streaming:on USER_VIEWSTATE_CHANGED",
 			})
 		}
 		return triggers, nil

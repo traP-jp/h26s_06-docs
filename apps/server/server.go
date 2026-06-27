@@ -7,7 +7,7 @@ import (
 )
 
 func newServer(cfg config) (*server, error) {
-	state, err := newDemoStateManager()
+	demoState, err := newDemoStateManager()
 	if err != nil {
 		return nil, err
 	}
@@ -17,8 +17,9 @@ func newServer(cfg config) (*server, error) {
 		client:     &http.Client{Timeout: 15 * time.Second},
 		states:     map[string]time.Time{},
 		sessions:   map[string]tokenResponse{},
-		state:      state,
-		hub:        newEventHub(),
+		demoState:  demoState,
+		demoHub:    newEventHub(),
+		liveHub:    newEventHub(),
 		initTokens: make(chan struct{}, maxConcurrentInits),
 	}, nil
 }
@@ -40,21 +41,16 @@ func (s *server) close() {
 	if s.demoCancel != nil {
 		s.demoCancel()
 	}
-	s.hub.close()
+	s.demoHub.close()
+	s.liveHub.close()
 }
 
 func (s *server) startDemoProducer() {
 	s.demoOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.demoCancel = cancel
-		go s.runDemoProducer(ctx)
+		go s.runDemoProducer(ctx, s.demoState, s.demoHub)
 	})
-}
-
-func (s *server) currentState() *stateManager {
-	s.stateMu.RLock()
-	defer s.stateMu.RUnlock()
-	return s.state
 }
 
 func (s *server) ensureLiveChannelData(ctx context.Context, accessToken string) (channelData, error) {
@@ -69,14 +65,7 @@ func (s *server) ensureLiveChannelData(ctx context.Context, accessToken string) 
 	if err != nil {
 		return channelData{}, err
 	}
-	s.replaceState(data.State)
 	s.liveData = data
 	s.liveReady = true
 	return data, nil
-}
-
-func (s *server) replaceState(state *stateManager) {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	s.state = state
 }

@@ -155,8 +155,11 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 		return trigger, true
 	case "mov":
 		if trigger.To == "" || sm.channels[trigger.To] == nil {
+			debugMov(trigger, "", "", "skipped", "destination channel is empty or unknown", 0)
 			return trigger, false
 		}
+		toName := sm.channels[trigger.To].Name
+		fromName := ""
 		if trigger.Usr != "" {
 			user := sm.users[trigger.Usr]
 			if user == nil {
@@ -167,12 +170,18 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 				trigger.From = user.CurrentChannel
 			}
 			if trigger.From == trigger.To {
+				debugMov(trigger, toName, toName, "skipped", "user is already in the destination channel", 0)
 				return trigger, false
 			}
 			user.CurrentChannel = trigger.To
 			user.LastUpdated = time.Now()
 		}
-		sm.addScoreLocked(trigger.To, 11)
+		if from := sm.channels[trigger.From]; from != nil {
+			fromName = from.Name
+		}
+		score := 11.0
+		sm.addScoreLocked(trigger.To, score)
+		debugMov(trigger, fromName, toName, "applied", "user moved to a different channel; destination channel and ancestors receive movement score", score)
 		return trigger, true
 	default:
 		return trigger, false

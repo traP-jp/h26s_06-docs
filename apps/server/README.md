@@ -8,6 +8,12 @@
 go run .
 ```
 
+### 本番ビルド
+
+```bash
+go build -tags production .
+```
+
 ### モッククライアント
 
 ####　起動
