@@ -20,6 +20,7 @@ interface KeyboardManagerOptions {
     settingsOpen?: Ref<boolean>;
 
     onMuteToggle?: () => void;
+    onSettingsOpen?: () => void;
     onSettingsClose?: () => void;
 }
 
@@ -38,18 +39,32 @@ export function useKeyboardManager({
     muted,
     settingsOpen,
     onMuteToggle,
+    onSettingsOpen,
     onSettingsClose,
 }: KeyboardManagerOptions): void {
     function handleKeyDown(event: KeyboardEvent): void {
         if (event.key === "Escape") {
-            if (settingsOpen?.value) {
-                event.preventDefault();
+            event.preventDefault();
 
+            if (settingsOpen?.value) {
                 if (onSettingsClose) {
                     onSettingsClose();
                 } else {
                     settingsOpen.value = false;
                 }
+
+                return;
+            }
+
+            if (selectedId.value) {
+                selectedId.value = undefined;
+                return;
+            }
+
+            if (onSettingsOpen) {
+                onSettingsOpen();
+            } else if (settingsOpen) {
+                settingsOpen.value = true;
             }
 
             return;

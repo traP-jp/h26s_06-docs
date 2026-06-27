@@ -147,6 +147,7 @@ useKeyboardManager({
     muted,
     settingsOpen,
     onMuteToggle: toggleMuted,
+    onSettingsOpen: openSettings,
     onSettingsClose: closeSettings,
 });
 
