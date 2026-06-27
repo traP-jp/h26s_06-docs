@@ -247,7 +247,7 @@ func (sm *stateManager) rebuildInitJSONLocked() error {
 			ID:       ch.ID,
 			Name:     ch.Name,
 			ParentID: ch.ParentID,
-			Children: append([]string(nil), children...),
+			Children: children,
 			IslandID: ch.IslandID,
 			Depth:    ch.Depth,
 		}
