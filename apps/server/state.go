@@ -154,6 +154,18 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 		sm.addScoreLocked(trigger.Ch, 46)
 		return trigger, true
 	case "mov":
+		if trigger.ClearCurrent {
+			if trigger.Usr == "" || trigger.From == "" {
+				return trigger, false
+			}
+			user := sm.users[trigger.Usr]
+			if user == nil || user.CurrentChannel != trigger.From {
+				return trigger, false
+			}
+			user.CurrentChannel = ""
+			user.LastUpdated = time.Now()
+			return trigger, false
+		}
 		if trigger.To == "" || sm.channels[trigger.To] == nil {
 			debugMov(trigger, "", "", "skipped", "destination channel is empty or unknown", 0)
 			return trigger, false

@@ -72,8 +72,9 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if demo {
 		s.startDemoProducer()
 	} else {
-		go s.consumeTraqStream(ctx, token.AccessToken, liveChannelIDs, streamState, streamHub)
-		go s.consumeViewerSnapshots(ctx, token.AccessToken, liveChannels, streamHub)
+		poller := newViewerPoller(liveChannels, s.cfg.viewerChannelsPerTick)
+		go s.consumeTraqStream(ctx, token.AccessToken, liveChannelIDs, streamState, streamHub, poller)
+		go s.consumeViewerSnapshots(ctx, token.AccessToken, poller, streamHub)
 	}
 
 	syncTicker := time.NewTicker(s.cfg.syncInterval)
@@ -111,18 +112,19 @@ func streamStatus(demo bool) string {
 	return "traQ connected"
 }
 
-func (s *server) publishTrigger(trigger triggerPayload, activeChannelIDs map[string]bool, state *stateManager, hub *eventHub) {
+func (s *server) publishTrigger(trigger triggerPayload, activeChannelIDs map[string]bool, state *stateManager, hub *eventHub) (triggerPayload, bool) {
 	if activeChannelIDs != nil && !triggerInActiveChannels(trigger, activeChannelIDs) {
 		if trigger.Type == "mov" {
 			debugMov(trigger, "", "", "skipped", "destination channel is not in active channel set", 0)
 		}
-		return
+		return trigger, false
 	}
 	applied, changed := state.applyTrigger(trigger)
 	if !changed {
-		return
+		return applied, false
 	}
 	hub.publish(marshalEvent("trigger", applied))
+	return applied, true
 }
 
 func triggerInActiveChannels(trigger triggerPayload, active map[string]bool) bool {
@@ -130,6 +132,9 @@ func triggerInActiveChannels(trigger triggerPayload, active map[string]bool) boo
 	case "msg":
 		return active[trigger.Ch]
 	case "mov":
+		if trigger.ClearCurrent {
+			return active[trigger.From]
+		}
 		return active[trigger.To]
 	default:
 		return false
@@ -169,7 +174,7 @@ func (s *server) runDemoProducer(ctx context.Context, state *stateManager, hub *
 	}
 }
 
-func (s *server) consumeTraqStream(ctx context.Context, accessToken string, activeChannelIDs map[string]bool, state *stateManager, hub *eventHub) {
+func (s *server) consumeTraqStream(ctx context.Context, accessToken string, activeChannelIDs map[string]bool, state *stateManager, hub *eventHub, poller *viewerPoller) {
 	triggers, errs := s.streamTraqTriggers(ctx, accessToken)
 	for {
 		select {
@@ -183,7 +188,10 @@ func (s *server) consumeTraqStream(ctx context.Context, accessToken string, acti
 				}
 				continue
 			}
-			s.publishTrigger(trigger, activeChannelIDs, state, hub)
+			applied, published := s.publishTrigger(trigger, activeChannelIDs, state, hub)
+			if published && applied.Type == "msg" {
+				poller.noteMessage(applied.Ch)
+			}
 		case err, ok := <-errs:
 			if ok && err != nil && ctx.Err() == nil {
 				log.Printf("traQ stream stopped: %v", err)
@@ -194,8 +202,7 @@ func (s *server) consumeTraqStream(ctx context.Context, accessToken string, acti
 	}
 }
 
-func (s *server) consumeViewerSnapshots(ctx context.Context, accessToken string, channels []traqChannel, hub *eventHub) {
-	poller := newViewerPoller(channels, s.cfg.viewerChannelsPerTick)
+func (s *server) consumeViewerSnapshots(ctx context.Context, accessToken string, poller *viewerPoller, hub *eventHub) {
 	for snapshot := range s.streamViewerSnapshots(ctx, accessToken, poller) {
 		hub.publish(marshalEvent("viewers", snapshot))
 	}
