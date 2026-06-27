@@ -49,7 +49,6 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		initPayload = data.InitJSON
 		liveChannelIDs = data.ChannelIDs
 		liveChannels = data.Channels
-		s.startLiveViewerPolling(liveChannels, streamState)
 	}
 
 	select {
@@ -63,6 +62,10 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	events := streamHub.subscribe()
 	defer streamHub.unsubscribe(events)
+
+	if !demo {
+		s.startLiveViewerPolling(liveChannels, streamState)
+	}
 
 	writeSSE(w, marshalEvent("status", map[string]string{"status": streamStatus(demo)}))
 	flusher.Flush()
