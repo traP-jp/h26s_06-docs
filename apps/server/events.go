@@ -124,18 +124,19 @@ func streamStatus(demo bool) string {
 	return "traQ connected"
 }
 
-func (s *server) publishTrigger(trigger triggerPayload, activeChannelIDs map[string]bool, state *stateManager, hub *eventHub) {
+func (s *server) publishTrigger(trigger triggerPayload, activeChannelIDs map[string]bool, state *stateManager, hub *eventHub) (triggerPayload, bool) {
 	if activeChannelIDs != nil && !triggerInActiveChannels(trigger, activeChannelIDs) {
 		if trigger.Type == "mov" {
 			debugMov(trigger, "", "", "skipped", "destination channel is not in active channel set", 0)
 		}
-		return
+		return trigger, false
 	}
 	applied, changed := state.applyTrigger(trigger)
 	if !changed {
-		return
+		return applied, false
 	}
 	hub.publish(marshalEvent("trigger", applied))
+	return applied, true
 }
 
 func triggerInActiveChannels(trigger triggerPayload, active map[string]bool) bool {
@@ -143,6 +144,9 @@ func triggerInActiveChannels(trigger triggerPayload, active map[string]bool) boo
 	case "msg":
 		return active[trigger.Ch]
 	case "mov":
+		if trigger.ClearCurrent {
+			return active[trigger.From]
+		}
 		return active[trigger.To]
 	default:
 		return false

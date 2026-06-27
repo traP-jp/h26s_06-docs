@@ -119,16 +119,23 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 		triggers := make([]triggerPayload, 0, len(body.ViewStates))
 		for _, view := range body.ViewStates {
 			channelID := view.channelID()
-			if view.Key == "" || channelID == "" || view.State == "none" {
+			if view.Key == "" || channelID == "" {
 				continue
 			}
-			triggers = append(triggers, triggerPayload{
+			trigger := triggerPayload{
 				Type:         "mov",
 				Usr:          hashViewerKey(view.Key),
-				To:           channelID,
 				Source:       "ws",
 				SourceDetail: "traQ /api/v3/ws timeline_streaming:on USER_VIEWSTATE_CHANGED",
-			})
+			}
+			if view.State == "none" {
+				trigger.From = channelID
+				trigger.ClearCurrent = true
+				triggers = append(triggers, trigger)
+				continue
+			}
+			trigger.To = channelID
+			triggers = append(triggers, trigger)
 		}
 		traqLogWS("USER_VIEWSTATE_CHANGED viewStates=%d triggers=%d", len(body.ViewStates), len(triggers))
 		return triggers, nil

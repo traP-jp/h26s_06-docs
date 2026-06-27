@@ -49,6 +49,64 @@ func TestStateManagerApplyTriggerSkipsDuplicateMovement(t *testing.T) {
 	}
 }
 
+func TestStateManagerApplyTriggerClearsCurrentChannelWithoutPublishing(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "a"}); !ok {
+		t.Fatal("initial movement was not applied")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", From: "a", ClearCurrent: true}); ok {
+		t.Fatal("clear current trigger was published")
+	}
+	state.mu.RLock()
+	current := state.users["u1"].CurrentChannel
+	state.mu.RUnlock()
+	if current != "" {
+		t.Fatalf("CurrentChannel = %q, want empty", current)
+	}
+
+	applied, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "b"})
+	if !ok {
+		t.Fatal("movement after clear was not applied")
+	}
+	if applied.From != "" {
+		t.Fatalf("inferred From = %q, want empty", applied.From)
+	}
+}
+
+func TestStateManagerApplyTriggerIgnoresStaleClearCurrent(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "a"}); !ok {
+		t.Fatal("first movement was not applied")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "b"}); !ok {
+		t.Fatal("second movement was not applied")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", From: "a", ClearCurrent: true}); ok {
+		t.Fatal("stale clear current trigger was published")
+	}
+
+	state.mu.RLock()
+	current := state.users["u1"].CurrentChannel
+	state.mu.RUnlock()
+	if current != "b" {
+		t.Fatalf("CurrentChannel = %q, want b", current)
+	}
+}
+
 func TestStateManagerApplyTriggerSkipsDuplicateMessage(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
 	if err != nil {

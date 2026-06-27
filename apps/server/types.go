@@ -96,6 +96,7 @@ type triggerPayload struct {
 	Usr          string `json:"usr,omitempty"`
 	From         string `json:"from,omitempty"`
 	To           string `json:"to,omitempty"`
+	ClearCurrent bool   `json:"-"`
 	MessageID    string `json:"-"`
 	Source       string `json:"-"`
 	SourceDetail string `json:"-"`
