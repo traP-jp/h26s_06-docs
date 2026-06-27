@@ -521,9 +521,10 @@ function onPointerUp(event: PointerEvent) {
     if (pointerMoved || !renderer || !camera || !nodes) return;
     const bounds = renderer.domElement.getBoundingClientRect();
     const pickedId = pickNodeAt(event.clientX - bounds.left, event.clientY - bounds.top, bounds);
-    const nextSelectedId = pickedId === props.selectedId ? undefined : pickedId;
 
-    emit("select", nextSelectedId);
+    if (pickedId === props.selectedId) return;
+
+    emit("select", pickedId);
 }
 
 function pickNodeAt(x: number, y: number, bounds: DOMRect) {
