@@ -38,7 +38,7 @@ func (s *server) routes() *echo.Echo {
 			return s.allowedOrigin(origin), nil
 		},
 		AllowHeaders:     []string{echo.HeaderContentType},
-		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodOptions},
 		AllowCredentials: true,
 	}))
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -56,6 +56,7 @@ func (s *server) routes() *echo.Echo {
 	e.Match(methods, "/api/auth/logout", s.handleLogout)
 	e.Match(methods, "/api/events", s.handleEvents)
 	e.Match(methods, "/api/me", s.handleMe)
+	e.PUT("/api/status", s.handleStatus)
 	e.Match(methods, "/healthz", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
