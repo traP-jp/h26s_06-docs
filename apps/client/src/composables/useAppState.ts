@@ -44,6 +44,14 @@ export function useAppState() {
         updatedAt.value = new Date().toLocaleTimeString("ja-JP");
     }
 
+    function resetActivity() {
+        graph.value = undefined;
+        selectedId.value = undefined;
+        eventCount.value = 0;
+        lastEvent.value = "初期データを待っています";
+        updatedAt.value = "";
+    }
+
     return {
         graph,
         connection,
@@ -57,5 +65,6 @@ export function useAppState() {
         selected,
         connectionLabel,
         recordTrigger,
+        resetActivity,
     };
 }
