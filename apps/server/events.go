@@ -10,6 +10,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+const maxConcurrentInits = 10
+
 func (s *server) handleEvents(c echo.Context) error {
 	r := c.Request()
 	w := c.Response().Writer
