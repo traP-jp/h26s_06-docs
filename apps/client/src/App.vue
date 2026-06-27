@@ -310,7 +310,6 @@ watch(selectedId, newId => {
         return;
     }
 
-    const shouldPlayBloom = Boolean(newId && graph.value.get(newId)?.children.length);
     const changed = graph.value.updateVisibility(newId);
     focusId.value = newId;
 
@@ -320,7 +319,7 @@ watch(selectedId, newId => {
         calculateChannelLayout(graph.value.nodes).then(positions => {
             if (generation === layoutGeneration) {
                 graph.value?.applyLayout(positions);
-                if (shouldPlayBloom) audioManager.playBloom();
+                audioManager.playBloom();
             }
         });
     }

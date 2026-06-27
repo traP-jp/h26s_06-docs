@@ -45,8 +45,8 @@ const DEFAULT_SETTINGS: AudioSettings = {
 const AUDIO_VOLUME_MULTIPLIERS = {
     bgm: 1.0,
     post: 0.5,
-    move: 1.0,
-    bloom: 2.5,
+    move: 0.1,
+    bloom: 2.3,
 } as const satisfies Record<AudioName, number>;
 
 const VOLUME_FADE_DURATION_MS = 600;

@@ -17,6 +17,7 @@ import (
 )
 
 type traqMe struct {
+	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
@@ -222,8 +223,8 @@ func (s *server) fetchTraqMe(ctx context.Context, accessToken string) (traqMe, e
 	if err := json.Unmarshal(body, &me); err != nil {
 		return traqMe{}, err
 	}
-	if me.Name == "" {
-		return traqMe{}, errors.New("users/me did not return name")
+	if me.ID == "" && me.Name == "" {
+		return traqMe{}, errors.New("users/me did not return id or name")
 	}
 	return me, nil
 }
