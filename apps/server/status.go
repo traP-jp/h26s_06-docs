@@ -7,19 +7,22 @@ import (
 )
 
 type statusRequest struct {
-	Channel   string `json:"channel"`
-	ChannelID string `json:"channelId"`
+	Channel   *string `json:"channel"`
+	ChannelID *string `json:"channelId"`
 }
 
-func (r statusRequest) channelID() string {
-	if r.Channel != "" {
-		return r.Channel
+func (r statusRequest) channelID() (string, bool) {
+	if r.Channel != nil {
+		return *r.Channel, true
 	}
-	return r.ChannelID
+	if r.ChannelID != nil {
+		return *r.ChannelID, true
+	}
+	return "", false
 }
 
 func (s *server) handleStatus(c echo.Context) error {
-	token, ok := s.sessionToken(c.Request())
+	sessionID, session, ok := s.session(c.Request())
 	if !ok {
 		return echoHTTPError(c, "not authenticated", http.StatusUnauthorized)
 	}
@@ -28,8 +31,8 @@ func (s *server) handleStatus(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echoHTTPError(c, "invalid status payload", http.StatusBadRequest)
 	}
-	channelID := req.channelID()
-	if channelID == "" {
+	channelID, ok := req.channelID()
+	if !ok {
 		return echoHTTPError(c, "channel is required", http.StatusBadRequest)
 	}
 
@@ -42,21 +45,22 @@ func (s *server) handleStatus(c echo.Context) error {
 		traqLogError("failed to load channel data for status update: %v", err)
 		return echoHTTPError(c, "failed to load channel data", http.StatusBadGateway)
 	}
-	if !data.ChannelIDs[channelID] {
+	if channelID != "" && !data.ChannelIDs[channelID] {
 		return echoHTTPError(c, "unknown channel", http.StatusBadRequest)
 	}
 
-	me, err := s.fetchTraqMe(c.Request().Context(), token.AccessToken)
+	userID, err := s.ensureSessionTraqUserID(c.Request().Context(), sessionID, session)
 	if err != nil {
 		traqLogError("failed to fetch traQ user info for status update: %v", err)
 		return echoHTTPError(c, "failed to fetch user info", http.StatusBadGateway)
 	}
-	userID := me.ID
-	if userID == "" {
-		userID = me.Name
-	}
-	if !data.State.setUserStatus(userID, channelID) {
+	if channelID == "" {
+		data.State.clearUserStatus(userID)
+	} else if !data.State.setUserStatus(userID, channelID) {
 		return echoHTTPError(c, "unknown channel", http.StatusBadRequest)
+	}
+	if channelID != "" && s.viewerHub != nil {
+		s.viewerHub.publish(viewerSignal{ChannelID: channelID})
 	}
 
 	return c.NoContent(http.StatusNoContent)

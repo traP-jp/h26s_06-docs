@@ -36,6 +36,7 @@ type server struct {
 	demoState  *stateManager
 	demoHub    *eventHub
 	liveHub    *eventHub
+	viewerHub  *viewerSignalHub
 	initTokens chan struct{}
 
 	demoOnce          sync.Once
@@ -124,6 +125,10 @@ type viewerSnapshotPayload struct {
 	Recent          []viewerRow            `json:"recent"`
 }
 
+type viewersPayload struct {
+	Viewers []string `json:"viewers"`
+}
+
 type viewerChannelSummary struct {
 	ChannelID   string `json:"channelId"`
 	ChannelName string `json:"channelName"`
@@ -142,8 +147,9 @@ type viewerRow struct {
 }
 
 type authSession struct {
-	Token     tokenResponse
-	ExpiresAt time.Time
+	Token      tokenResponse
+	ExpiresAt  time.Time
+	TraqUserID string
 }
 
 type tokenResponse struct {
@@ -217,4 +223,29 @@ func (s wsViewState) channelID() string {
 		return s.ChannelID
 	}
 	return s.ChannelIDSnake
+}
+
+type wsChannelViewersChangedBody struct {
+	ID             string `json:"id"`
+	ChannelID      string `json:"channelId"`
+	ChannelIDUpper string `json:"channelID"`
+	ChannelIDSnake string `json:"channel_id"`
+	Channel        struct {
+		ID string `json:"id"`
+	} `json:"channel"`
+}
+
+func (b wsChannelViewersChangedBody) channelID() string {
+	switch {
+	case b.ChannelID != "":
+		return b.ChannelID
+	case b.ChannelIDUpper != "":
+		return b.ChannelIDUpper
+	case b.ChannelIDSnake != "":
+		return b.ChannelIDSnake
+	case b.Channel.ID != "":
+		return b.Channel.ID
+	default:
+		return b.ID
+	}
 }

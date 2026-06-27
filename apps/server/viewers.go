@@ -139,6 +139,98 @@ func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, 
 	return out
 }
 
+func (s *server) streamCurrentViewerEvents(ctx context.Context, accessToken string, userID string, state *stateManager, activeChannelIDs map[string]bool) <-chan sseEvent {
+	out := make(chan sseEvent, clientEventQueueSize)
+	var signals <-chan viewerSignal
+	if s.viewerHub != nil {
+		ch := s.viewerHub.subscribe()
+		signals = ch
+		deferUnsubscribe := func() {
+			s.viewerHub.unsubscribe(ch)
+		}
+		go func() {
+			defer close(out)
+			defer deferUnsubscribe()
+			s.runCurrentViewerEvents(ctx, out, signals, accessToken, userID, state, activeChannelIDs)
+		}()
+		return out
+	}
+
+	go func() {
+		defer close(out)
+		s.runCurrentViewerEvents(ctx, out, nil, accessToken, userID, state, activeChannelIDs)
+	}()
+	return out
+}
+
+func (s *server) runCurrentViewerEvents(ctx context.Context, out chan<- sseEvent, signals <-chan viewerSignal, accessToken string, userID string, state *stateManager, activeChannelIDs map[string]bool) {
+	emit := func(reason string) bool {
+		event, ok := s.currentViewersEvent(ctx, accessToken, userID, state, activeChannelIDs)
+		if !ok {
+			return true
+		}
+		traqLogOK("viewer event emitted reason=%s userID=%s bytes=%d", reason, userID, len(event.Data))
+		select {
+		case out <- event:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
+	if !emit("initial") {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case signal, ok := <-signals:
+			if !ok {
+				return
+			}
+			currentChannelID := state.currentChannel(userID)
+			if signal.ChannelID != "" && currentChannelID != signal.ChannelID {
+				continue
+			}
+			if !emit("signal") {
+				return
+			}
+		}
+	}
+}
+
+func (s *server) currentViewersEvent(ctx context.Context, accessToken string, userID string, state *stateManager, activeChannelIDs map[string]bool) (sseEvent, bool) {
+	channelID := state.currentChannel(userID)
+	if channelID == "" || (activeChannelIDs != nil && !activeChannelIDs[channelID]) {
+		return sseEvent{}, false
+	}
+
+	viewers, err := s.fetchChannelViewers(ctx, accessToken, channelID)
+	if err != nil {
+		if ctx.Err() == nil {
+			traqLogWarn("viewer event skipped channelID=%s: %v", channelID, err)
+		}
+		return sseEvent{}, false
+	}
+	return marshalEvent("viewers", viewersPayload{Viewers: viewerUserIDs(viewers)}), true
+}
+
+func viewerUserIDs(viewers []traqViewer) []string {
+	seen := make(map[string]bool, len(viewers))
+	ids := make([]string, 0, len(viewers))
+	for _, viewer := range viewers {
+		if viewer.UserID == "" || seen[viewer.UserID] {
+			continue
+		}
+		seen[viewer.UserID] = true
+		ids = append(ids, viewer.UserID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 func (s *server) fetchViewerSnapshot(ctx context.Context, accessToken string, poller *viewerPoller) (viewerSnapshotPayload, error) {
 	channels := poller.sampleChannels()
 	type result struct {

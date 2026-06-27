@@ -135,6 +135,28 @@ func TestStateManagerApplyTriggerIgnoresStaleClearCurrent(t *testing.T) {
 	}
 }
 
+func TestStateManagerClearUserStatusDoesNotCreateUser(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "a", Name: "a"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	if ok := state.clearUserStatus("unknown-user"); ok {
+		t.Fatal("clearUserStatus returned true for unknown user")
+	}
+
+	state.mu.RLock()
+	userCount := len(state.users)
+	_, exists := state.users["unknown-user"]
+	state.mu.RUnlock()
+	if userCount != 0 {
+		t.Fatalf("users count = %d, want 0", userCount)
+	}
+	if exists {
+		t.Fatal("unknown user was created")
+	}
+}
+
 func TestStateManagerApplyTriggerSkipsDuplicateMessage(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
 	if err != nil {
