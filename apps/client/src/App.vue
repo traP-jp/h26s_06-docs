@@ -322,6 +322,7 @@ onBeforeUnmount(() => {
 
         <header class="topbar ui-panel">
             <div>
+                <img src="./assets/Qosmos_logoless.png" alt="Qosmos logo" class="topbar-logo" />
                 <p class="eyebrow">traQ ACTIVITY OBSERVATORY</p>
                 <h1>Channel Universe</h1>
             </div>

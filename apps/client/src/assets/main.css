@@ -62,6 +62,18 @@ button {
     padding: 16px 20px;
 }
 
+.topbar > div {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.topbar-logo {
+    height: 32px;
+    width: auto;
+    flex-shrink: 0;
+}
+
 .topbar__meta {
     display: flex;
     align-items: center;
