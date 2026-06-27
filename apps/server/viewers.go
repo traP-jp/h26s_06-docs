@@ -215,6 +215,7 @@ func (s *server) fetchViewerSnapshot(ctx context.Context, accessToken string, po
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i].UpdatedAt.After(rows[j].UpdatedAt)
 	})
+	totalRows := len(rows)
 	if len(summaries) > 12 {
 		summaries = summaries[:12]
 	}
@@ -224,7 +225,7 @@ func (s *server) fetchViewerSnapshot(ctx context.Context, accessToken string, po
 
 	return viewerSnapshotPayload{
 		TS:              time.Now().Unix(),
-		Total:           len(rows),
+		Total:           totalRows,
 		SampledChannels: len(channels),
 		TotalChannels:   len(poller.channels),
 		Channels:        summaries,
