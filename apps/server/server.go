@@ -24,6 +24,7 @@ func newServer(cfg config) (*server, error) {
 		demoState:    demoState,
 		demoHub:      newEventHub(),
 		liveHub:      newEventHub(),
+		viewerHub:    newViewerSignalHub(),
 		initTokens:   make(chan struct{}, maxConcurrentInits),
 	}, nil
 }
@@ -81,6 +82,7 @@ func (s *server) close() {
 	}
 	s.demoHub.close()
 	s.liveHub.close()
+	s.viewerHub.close()
 }
 
 func (s *server) startAuthCleanup(ctx context.Context) {

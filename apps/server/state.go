@@ -181,6 +181,17 @@ func (sm *stateManager) setUserStatus(userID string, channelID string) bool {
 	return true
 }
 
+func (sm *stateManager) currentChannel(userID string) string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	user := sm.users[userID]
+	if user == nil {
+		return ""
+	}
+	return user.CurrentChannel
+}
+
 func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bool) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()

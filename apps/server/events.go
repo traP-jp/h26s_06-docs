@@ -37,7 +37,7 @@ func (s *server) handleEvents(c echo.Context) error {
 	streamHub := s.demoHub
 	initPayload := streamState.initPayloadBytes()
 	var liveChannelIDs map[string]bool
-	var liveChannels []traqChannel
+	var currentUserID string
 
 	if !demo {
 		data, err := s.ensureLiveChannelData(r.Context(), token.AccessToken)
@@ -50,7 +50,16 @@ func (s *server) handleEvents(c echo.Context) error {
 		streamHub = s.liveHub
 		initPayload = data.InitJSON
 		liveChannelIDs = data.ChannelIDs
-		liveChannels = data.Channels
+		me, err := s.fetchTraqMe(r.Context(), token.AccessToken)
+		if err != nil {
+			writeSSE(w, marshalEvent("stream-error", map[string]string{"error": err.Error()}))
+			flusher.Flush()
+			return nil
+		}
+		currentUserID = me.ID
+		if currentUserID == "" {
+			currentUserID = me.Name
+		}
 		s.startLiveSyncProducer(streamState)
 	}
 
@@ -66,19 +75,17 @@ func (s *server) handleEvents(c echo.Context) error {
 	events := streamHub.subscribe()
 	defer streamHub.unsubscribe(events)
 
-	if !demo {
-		s.startLiveViewerPolling(liveChannels, streamState)
-	}
-
 	writeSSE(w, marshalEvent("status", map[string]string{"status": streamStatus(demo)}))
 	flusher.Flush()
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	var viewerEvents <-chan sseEvent
 	if demo {
 		s.startDemoProducer()
 		s.startDemoSyncProducer()
 	} else {
+		viewerEvents = s.streamCurrentViewerEvents(ctx, token.AccessToken, currentUserID, streamState, liveChannelIDs)
 		go s.consumeTraqStream(ctx, token.AccessToken, liveChannelIDs, streamState, streamHub)
 	}
 
@@ -95,6 +102,13 @@ func (s *server) handleEvents(c echo.Context) error {
 		case event, ok := <-events:
 			if !ok {
 				return nil
+			}
+			writeSSE(w, event)
+			flusher.Flush()
+		case event, ok := <-viewerEvents:
+			if !ok {
+				viewerEvents = nil
+				continue
 			}
 			writeSSE(w, event)
 			flusher.Flush()

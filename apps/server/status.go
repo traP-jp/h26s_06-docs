@@ -58,6 +58,9 @@ func (s *server) handleStatus(c echo.Context) error {
 	if !data.State.setUserStatus(userID, channelID) {
 		return echoHTTPError(c, "unknown channel", http.StatusBadRequest)
 	}
+	if s.viewerHub != nil {
+		s.viewerHub.publish(viewerSignal{ChannelID: channelID})
+	}
 
 	return c.NoContent(http.StatusNoContent)
 }

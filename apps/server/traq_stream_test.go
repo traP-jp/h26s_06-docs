@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFetchMessageInfoFetchesUserBot(t *testing.T) {
@@ -156,6 +157,62 @@ func TestParseTraqEventViewStateActiveReturnsMovementTrigger(t *testing.T) {
 	}
 	if trigger.ClearCurrent {
 		t.Fatal("ClearCurrent was true")
+	}
+}
+
+func TestParseTraqEventChannelViewersChangedPublishesSignal(t *testing.T) {
+	srv, err := newServer(config{})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	signals := srv.viewerHub.subscribe()
+	defer srv.viewerHub.unsubscribe(signals)
+	payload := mustMarshalEvent(t, wsEvent{
+		Type: "CHANNEL_VIEWERS_CHANGED",
+		Body: mustMarshalRaw(t, wsChannelViewersChangedBody{ChannelID: "channel-a"}),
+	})
+
+	triggers, err := srv.parseTraqEvent(context.Background(), "token", payload)
+	if err != nil {
+		t.Fatalf("parseTraqEvent returned error: %v", err)
+	}
+	if len(triggers) != 0 {
+		t.Fatalf("triggers = %d, want 0", len(triggers))
+	}
+
+	select {
+	case signal := <-signals:
+		if signal.ChannelID != "channel-a" {
+			t.Fatalf("signal.ChannelID = %q, want channel-a", signal.ChannelID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for viewer signal")
+	}
+}
+
+func TestParseTraqEventChannelViewersChangedAcceptsSnakeChannelID(t *testing.T) {
+	srv, err := newServer(config{})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	signals := srv.viewerHub.subscribe()
+	defer srv.viewerHub.unsubscribe(signals)
+	payload := mustMarshalEvent(t, wsEvent{
+		Type: "CHANNEL_VIEWERS_CHANGED",
+		Body: []byte(`{"channel_id":"channel-b"}`),
+	})
+
+	if _, err := srv.parseTraqEvent(context.Background(), "token", payload); err != nil {
+		t.Fatalf("parseTraqEvent returned error: %v", err)
+	}
+
+	select {
+	case signal := <-signals:
+		if signal.ChannelID != "channel-b" {
+			t.Fatalf("signal.ChannelID = %q, want channel-b", signal.ChannelID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for viewer signal")
 	}
 }
 
