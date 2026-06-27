@@ -56,7 +56,7 @@ func (s *server) startDemoProducer() {
 	})
 }
 
-func (s *server) startLiveViewerPolling(channels []traqChannel) {
+func (s *server) startLiveViewerPolling(channels []traqChannel, state *stateManager) {
 	s.liveViewersOnce.Do(func() {
 		if s.cfg.traqBotAccessToken == "" {
 			traqLogWarn("TRAQ_BOT_ACCESS_TOKEN is empty; viewer polling is disabled")
@@ -65,7 +65,7 @@ func (s *server) startLiveViewerPolling(channels []traqChannel) {
 		traqLogOK("viewer polling started with bot token channels=%d interval=%s", len(channels), s.cfg.viewerPollInterval)
 		ctx, cancel := context.WithCancel(context.Background())
 		s.liveViewersCancel = cancel
-		go s.consumeViewerSnapshots(ctx, s.cfg.traqBotAccessToken, channels, s.liveHub)
+		go s.consumeViewerSnapshots(ctx, s.cfg.traqBotAccessToken, channels, state, s.liveHub)
 	})
 }
 

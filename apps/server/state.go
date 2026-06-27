@@ -222,20 +222,69 @@ func (sm *stateManager) syncPayload() syncPayload {
 	defer sm.mu.Unlock()
 
 	now := time.Now()
-	deltas := make(map[string]float64)
+	weighted := make([]weightedChannel, 0, len(sm.channels))
 	for _, ch := range sm.channels {
 		elapsed := now.Sub(ch.LastSyncTime).Seconds()
 		ch.Score *= math.Exp(-elapsed / 24)
 
 		deltaScore := math.Abs(ch.Score - ch.LastSyncScore)
-		probability := math.Min(1, 0.22*deltaScore+0.002*elapsed)
-		if rand.Float64() < probability || (ch.Score > 0.1 && elapsed >= 30) {
-			deltas[ch.ID] = math.Round(ch.Score*10) / 10
-			ch.LastSyncScore = ch.Score
-			ch.LastSyncTime = now
+		weight := syncPayloadWeight(deltaScore, elapsed)
+		weighted = append(weighted, weightedChannel{id: ch.ID, rawWeight: weight})
+	}
+
+	deltas := make(map[string]float64)
+	for _, selected := range selectWeightedChannels(weighted, 1) {
+		ch := sm.channels[selected.id]
+		if ch == nil {
+			continue
 		}
+		deltas[ch.ID] = math.Round(ch.Score*10) / 10
+		ch.LastSyncScore = ch.Score
+		ch.LastSyncTime = now
 	}
 	return syncPayload{TS: now.Unix(), Deltas: deltas}
+}
+
+func syncPayloadWeight(deltaScore float64, elapsedSeconds float64) float64 {
+	return 0.22*deltaScore + 0.002*elapsedSeconds
+}
+
+func (sm *stateManager) sampleViewerChannels(candidates []traqChannel, maxChannels int) []traqChannel {
+	if maxChannels <= 0 || len(candidates) == 0 {
+		return nil
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	now := time.Now()
+	weighted := make([]weightedChannel, 0, len(candidates))
+	for _, candidate := range candidates {
+		ch := sm.channels[candidate.ID]
+		if ch == nil {
+			continue
+		}
+		probability := 1.0
+		if !ch.LastViewTime.IsZero() {
+			elapsed := now.Sub(ch.LastViewTime).Seconds()
+			probability = viewerPollWeight(ch.Score, elapsed)
+		}
+		weighted = append(weighted, weightedChannel{id: candidate.ID, channel: candidate, rawWeight: probability})
+	}
+
+	selected := selectWeightedChannels(weighted, maxChannels)
+	channels := make([]traqChannel, 0, len(selected))
+	for _, selectedChannel := range selected {
+		if ch := sm.channels[selectedChannel.id]; ch != nil {
+			ch.LastViewTime = now
+		}
+		channels = append(channels, selectedChannel.channel)
+	}
+	return channels
+}
+
+func viewerPollWeight(score float64, elapsedSeconds float64) float64 {
+	return 0.01*score + 0.001*elapsedSeconds
 }
 
 func (sm *stateManager) randomLeafID() string {

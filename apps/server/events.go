@@ -49,7 +49,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		initPayload = data.InitJSON
 		liveChannelIDs = data.ChannelIDs
 		liveChannels = data.Channels
-		s.startLiveViewerPolling(liveChannels)
+		s.startLiveViewerPolling(liveChannels, streamState)
 	}
 
 	select {
@@ -193,8 +193,8 @@ func (s *server) consumeTraqStream(ctx context.Context, accessToken string, acti
 	}
 }
 
-func (s *server) consumeViewerSnapshots(ctx context.Context, accessToken string, channels []traqChannel, hub *eventHub) {
-	poller := newViewerPoller(channels, s.cfg.viewerChannelsPerTick)
+func (s *server) consumeViewerSnapshots(ctx context.Context, accessToken string, channels []traqChannel, state *stateManager, hub *eventHub) {
+	poller := newViewerPoller(channels, s.cfg.viewerChannelsPerTick, state)
 	for snapshot := range s.streamViewerSnapshots(ctx, accessToken, poller) {
 		hub.publish(marshalEvent("viewers", snapshot))
 	}

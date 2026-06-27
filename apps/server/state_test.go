@@ -101,6 +101,65 @@ func TestStateManagerKeepsOnlyRecentMessageIDs(t *testing.T) {
 	}
 }
 
+func TestViewerPollWeightUsesCurrentScoreAndElapsed(t *testing.T) {
+	if got := viewerPollWeight(0, 0); got != 0 {
+		t.Fatalf("weight = %v, want 0", got)
+	}
+	if got := viewerPollWeight(50, 10); got < 0.509 || got > 0.511 {
+		t.Fatalf("weight = %v, want 0.51", got)
+	}
+	if got := viewerPollWeight(100, 100); got != 1.1 {
+		t.Fatalf("weight = %v, want 1.1", got)
+	}
+}
+
+func TestNormalizeWeightedChannelsSumsToOne(t *testing.T) {
+	normalized := normalizeWeightedChannels([]weightedChannel{
+		{id: "a", rawWeight: 2},
+		{id: "b", rawWeight: 3},
+		{id: "c", rawWeight: 0},
+	})
+	if len(normalized) != 2 {
+		t.Fatalf("normalized channels = %d, want 2", len(normalized))
+	}
+	total := 0.0
+	for _, channel := range normalized {
+		total += channel.normalizedWeight
+	}
+	if total < 0.999 || total > 1.001 {
+		t.Fatalf("normalized total = %v, want 1", total)
+	}
+}
+
+func TestStateManagerSampleViewerChannelsCapsInitialSelection(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b"},
+		{ID: "c", Name: "c"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+	candidates := []traqChannel{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b"},
+		{ID: "c", Name: "c"},
+	}
+
+	selected := state.sampleViewerChannels(candidates, 2)
+	if len(selected) != 2 {
+		t.Fatalf("selected channels = %d, want 2", len(selected))
+	}
+	for _, selectedChannel := range selected {
+		state.mu.RLock()
+		lastViewTime := state.channels[selectedChannel.ID].LastViewTime
+		state.mu.RUnlock()
+		if lastViewTime.IsZero() {
+			t.Fatalf("selected channel %s did not record last view time", selectedChannel.ID)
+		}
+	}
+}
+
 func TestEnsureLiveChannelDataKeepsDemoAndLiveStateSeparate(t *testing.T) {
 	hits := 0
 	srv, err := newServer(config{traqBaseURL: "https://example.test"})

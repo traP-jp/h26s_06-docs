@@ -48,6 +48,7 @@ type channel struct {
 	Score         float64
 	LastSyncScore float64
 	LastSyncTime  time.Time
+	LastViewTime  time.Time
 }
 
 type userState struct {
