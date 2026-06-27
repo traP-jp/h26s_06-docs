@@ -61,8 +61,15 @@ function createDeepChannels(): ChannelDictionary {
         leaf: {
             id: "leaf",
             parentId: "branch",
-            children: [],
+            children: ["nested"],
             depth: 3,
+            islandId: 0,
+        },
+        nested: {
+            id: "nested",
+            parentId: "leaf",
+            children: [],
+            depth: 4,
             islandId: 0,
         },
     };
@@ -117,5 +124,34 @@ describe("ChannelGraph active visibility", () => {
         expect(graph.get("branch")!.isLayoutActive).toBe(true);
         expect(graph.get("root")!.isLayoutActive).toBe(true);
         expect(graph.get("grand_root")!.isLayoutActive).toBe(true);
+    });
+
+    test("reveals a hidden message path one reached node at a time", () => {
+        const graph = new ChannelGraph(createDeepChannels());
+        graph.updateVisibility();
+
+        expect(graph.get("leaf")!.isLayoutActive).toBe(false);
+        expect(graph.get("nested")!.isLayoutActive).toBe(false);
+
+        expect(graph.applyTrigger({ type: "msg", ch: "nested" })).toBe(true);
+        graph.updateVisibility();
+        graph.update(1);
+
+        expect(graph.takeVisualEvents()).toEqual([{ type: "message", channelId: "nested" }]);
+        expect(graph.get("leaf")!.isLayoutActive).toBe(true);
+        expect(graph.get("nested")!.isLayoutActive).toBe(true);
+        expect(graph.get("leaf")!.visibilityAlpha).toBe(0);
+        expect(graph.get("nested")!.visibilityAlpha).toBe(0);
+
+        graph.revealMessageNode("leaf");
+        graph.update(1);
+
+        expect(graph.get("leaf")!.visibilityAlpha).toBeGreaterThan(0);
+        expect(graph.get("nested")!.visibilityAlpha).toBe(0);
+
+        graph.revealMessageNode("nested");
+        graph.update(1);
+
+        expect(graph.get("nested")!.visibilityAlpha).toBeGreaterThan(0);
     });
 });

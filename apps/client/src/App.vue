@@ -135,6 +135,19 @@ function resetAudioSettings(): void {
     sfxVolume.value = audioManager.sfxVolume;
 }
 
+function scheduleLayout(targetGraph: ChannelGraph): void {
+    const generation = ++layoutGeneration;
+    calculateChannelLayout(targetGraph.nodes).then(positions => {
+        if (generation === layoutGeneration && graph.value === targetGraph) {
+            targetGraph.applyLayout(positions);
+        }
+    });
+}
+
+function revealMessageNode(id: string): void {
+    graph.value?.revealMessageNode(id);
+}
+
 async function retryAuthentication() {
     if (isDemoMode) return;
     const authenticated = await refreshAuthentication();
@@ -237,7 +250,11 @@ function connectStream() {
         },
 
         onTrigger(trigger) {
-            (pendingGraph ?? graph.value)?.applyTrigger(trigger);
+            const targetGraph = pendingGraph ?? graph.value;
+            const visibilityChanged = targetGraph?.applyTrigger(trigger) ?? false;
+            if (visibilityChanged && targetGraph && targetGraph === graph.value) {
+                scheduleLayout(targetGraph);
+            }
             recordTrigger(trigger);
         },
 
@@ -304,6 +321,7 @@ watch(selectedId, newId => {
         calculateChannelLayout(graph.value.nodes).then(positions => {
             if (generation === layoutGeneration) {
                 graph.value?.applyLayout(positions);
+                audioManager.playBloom();
                 if (focusId.value) focusRevision.value += 1;
             }
         });
@@ -510,6 +528,7 @@ onBeforeUnmount(() => {
             :focus-revision="focusRevision"
             :active-only="activeOnly"
             @select="selectedId = $event"
+            @message-node-reached="revealMessageNode"
             @render-error="renderError = $event"
         />
 
@@ -648,7 +667,15 @@ onBeforeUnmount(() => {
             </button>
             <p class="eyebrow">SELECTED CHANNEL</p>
             <h2>{{ selected.name }}</h2>
-            <p class="details__path">{{ selected.path }}</p>
+            <a
+                v-if="selected.path !== '# '"
+                class="details__path"
+                :href="selected.pathHref"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                {{ selected.path }}
+            </a>
             <dl>
                 <div>
                     <dt>ACTIVITY</dt>

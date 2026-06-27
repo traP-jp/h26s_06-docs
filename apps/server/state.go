@@ -164,6 +164,23 @@ func (sm *stateManager) initPayloadBytes() []byte {
 	return append([]byte(nil), sm.initJSON...)
 }
 
+func (sm *stateManager) setUserStatus(userID string, channelID string) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if userID == "" || channelID == "" || sm.channels[channelID] == nil {
+		return false
+	}
+	user := sm.users[userID]
+	if user == nil {
+		user = &userState{UserID: userID}
+		sm.users[userID] = user
+	}
+	user.CurrentChannel = channelID
+	user.LastUpdated = time.Now()
+	return true
+}
+
 func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bool) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
