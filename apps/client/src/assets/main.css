@@ -1,35 +1,355 @@
 @import "./base.css";
 
-#app {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 2rem;
-    font-weight: normal;
+:root {
+    color: #eaf3ff;
+    background: #03060d;
+    font-family:
+        Inter,
+        "Noto Sans JP",
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        sans-serif;
 }
 
-a,
-.green {
-    text-decoration: none;
-    color: hsla(160, 100%, 37%, 1);
-    transition: 0.4s;
-    padding: 3px;
+* {
+    box-sizing: border-box;
 }
 
-@media (hover: hover) {
-    a:hover {
-        background-color: hsla(160, 100%, 37%, 0.2);
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+button {
+    font: inherit;
+}
+
+.app-shell {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: radial-gradient(circle at 64% 52%, rgb(26 16 8 / 34%) 0, transparent 30%), #010204;
+}
+
+.app-shell::after {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    content: "";
+    background: radial-gradient(circle, transparent 56%, rgb(0 0 0 / 72%) 112%);
+}
+
+.ui-panel {
+    position: absolute;
+    z-index: 2;
+    border: 1px solid rgb(140 190 255 / 14%);
+    background: rgb(5 12 25 / 66%);
+    box-shadow: 0 18px 80px rgb(0 0 0 / 25%);
+    backdrop-filter: blur(18px);
+}
+
+.topbar {
+    top: 24px;
+    left: 24px;
+    display: flex;
+    align-items: center;
+    gap: 56px;
+    padding: 16px 20px;
+}
+
+.eyebrow {
+    margin: 0 0 5px;
+    color: #7187a4;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+}
+
+h1,
+h2 {
+    margin: 0;
+    font-weight: 450;
+    letter-spacing: 0.02em;
+}
+
+h1 {
+    font-size: 21px;
+}
+
+h2 {
+    font-size: 25px;
+}
+
+.connection {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 112px;
+}
+
+.connection__dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ffb85c;
+    box-shadow: 0 0 14px currentcolor;
+}
+
+.connection[data-state="open"] .connection__dot {
+    color: #63efb2;
+    background: currentcolor;
+}
+
+.connection[data-state="closed"] .connection__dot {
+    color: #ff668a;
+    background: currentcolor;
+}
+
+.connection strong,
+.connection small {
+    display: block;
+}
+
+.connection strong {
+    color: #cde7ff;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+}
+
+.connection small {
+    max-width: 150px;
+    margin-top: 2px;
+    overflow: hidden;
+    color: #7187a4;
+    font-size: 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.metrics {
+    top: 124px;
+    left: 24px;
+    width: 230px;
+    padding: 17px;
+}
+
+.display-controls {
+    top: 330px;
+    left: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 230px;
+    gap: 6px;
+    padding: 14px 17px 17px;
+}
+
+.display-controls .eyebrow {
+    grid-column: 1 / -1;
+}
+
+.display-controls button {
+    border: 1px solid rgb(140 190 255 / 13%);
+    padding: 7px;
+    color: #62768f;
+    background: rgb(5 12 25 / 72%);
+    cursor: pointer;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+}
+
+.display-controls button.active {
+    border-color: rgb(105 215 255 / 42%);
+    color: #ccecff;
+    background: rgb(68 150 210 / 16%);
+}
+
+dl {
+    margin: 0;
+}
+
+.metrics dl,
+.details dl {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1px;
+    margin-top: 13px;
+    background: rgb(130 180 240 / 10%);
+}
+
+dl > div {
+    padding: 11px;
+    background: rgb(5 12 25 / 92%);
+}
+
+dt {
+    color: #62768f;
+    font-size: 8px;
+    letter-spacing: 0.15em;
+}
+
+dd {
+    margin: 3px 0 0;
+    color: #d9edff;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 20px;
+}
+
+.latest {
+    display: grid;
+    gap: 5px;
+    margin-top: 15px;
+}
+
+.latest span,
+.latest time {
+    color: #62768f;
+    font-size: 8px;
+    letter-spacing: 0.14em;
+}
+
+.latest strong {
+    overflow: hidden;
+    color: #adcae6;
+    font-size: 11px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.details {
+    right: 24px;
+    bottom: 52px;
+    width: min(340px, calc(100vw - 48px));
+    padding: 22px;
+}
+
+.details__close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    border: 0;
+    color: #7187a4;
+    background: transparent;
+    cursor: pointer;
+    font-size: 22px;
+}
+
+.details__path {
+    margin: 8px 0 0;
+    color: #7187a4;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.details dl {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.details dd {
+    font-size: 16px;
+}
+
+.hint {
+    position: absolute;
+    z-index: 2;
+    right: 24px;
+    bottom: 20px;
+    color: #53647a;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+}
+
+.hint span {
+    margin-left: 13px;
+    color: #8ba4c0;
+}
+
+.loading {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    color: #8196af;
+    font-size: 9px;
+    letter-spacing: 0.2em;
+}
+
+.render-error {
+    top: 50%;
+    left: 50%;
+    display: grid;
+    width: min(360px, calc(100vw - 48px));
+    gap: 12px;
+    padding: 24px;
+    transform: translate(-50%, -50%);
+}
+
+.render-error strong {
+    color: #ffb0c1;
+    font-size: 13px;
+}
+
+.render-error button {
+    justify-self: start;
+    border: 1px solid rgb(140 190 255 / 25%);
+    padding: 8px 12px;
+    color: #d9edff;
+    background: rgb(100 160 220 / 12%);
+    cursor: pointer;
+}
+
+.loading__orbit {
+    width: 46px;
+    height: 46px;
+    margin-bottom: 18px;
+    border: 1px solid rgb(120 190 255 / 18%);
+    border-top-color: #75caff;
+    border-radius: 50%;
+    animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(1turn);
     }
 }
 
-@media (min-width: 1024px) {
-    body {
-        display: flex;
-        place-items: center;
+@media (max-width: 640px) {
+    .topbar {
+        top: 12px;
+        right: 12px;
+        left: 12px;
+        justify-content: space-between;
+        gap: 12px;
     }
 
-    #app {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        padding: 0 2rem;
+    h1 {
+        font-size: 17px;
+    }
+
+    .metrics {
+        top: 102px;
+        left: 12px;
+        width: 190px;
+    }
+
+    .display-controls {
+        top: 308px;
+        left: 12px;
+        width: 190px;
+    }
+
+    .details {
+        right: 12px;
+        bottom: 42px;
+    }
+
+    .hint {
+        display: none;
     }
 }

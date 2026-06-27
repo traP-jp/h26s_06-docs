@@ -9,55 +9,150 @@ import (
 )
 
 // このファイルは、チャンネルの熱量とユーザー移動状態をメモリ上で管理します。
-func newStateManager() *stateManager {
+func newStateManager(vertexCount int) *stateManager {
 	now := time.Now()
 	channels := map[string]*channel{
 		grandRootID: {
 			ID:           grandRootID,
 			Name:         "Grand Root",
 			ParentID:     "",
+			Children:     []string{},
 			IslandID:     -1,
 			Depth:        0,
 			LastSyncTime: now,
 		},
 	}
 
+	if vertexCount < 1 {
+		vertexCount = 129
+	}
+
 	rootNames := []string{"general", "random", "event", "team", "times", "project", "creative", "tech"}
-	for i, name := range rootNames {
+	numIslands := len(rootNames)
+	if vertexCount-1 < numIslands {
+		numIslands = vertexCount - 1
+	}
+	if numIslands < 0 {
+		numIslands = 0
+	}
+
+	// 1. 島ノード (depth 1) の作成
+	for i := 0; i < numIslands; i++ {
 		rootID := fmt.Sprintf("island-%d", i+1)
 		channels[grandRootID].Children = append(channels[grandRootID].Children, rootID)
 		channels[rootID] = &channel{
 			ID:           rootID,
-			Name:         name,
+			Name:         rootNames[i],
 			ParentID:     grandRootID,
+			Children:     []string{},
 			IslandID:     i,
 			Depth:        1,
 			LastSyncTime: now,
 		}
+	}
 
-		for j := 0; j < 5; j++ {
-			childID := fmt.Sprintf("%s-ch-%d", rootID, j+1)
-			channels[rootID].Children = append(channels[rootID].Children, childID)
-			channels[childID] = &channel{
-				ID:           childID,
-				Name:         fmt.Sprintf("%s/%02d", name, j+1),
-				ParentID:     rootID,
-				IslandID:     i,
-				Depth:        2,
-				LastSyncTime: now,
+	// 2. 残りのノードを島に配分して、depth 2〜5 を作成
+	remaining := vertexCount - 1 - numIslands
+	if remaining > 0 && numIslands > 0 {
+		base := remaining / numIslands
+		extra := remaining % numIslands
+
+		for i := 0; i < numIslands; i++ {
+			rootID := fmt.Sprintf("island-%d", i+1)
+			alloc := base
+			if i < extra {
+				alloc++
 			}
 
-			for k := 0; k < 2; k++ {
-				leafID := fmt.Sprintf("%s-sub-%d", childID, k+1)
-				channels[childID].Children = append(channels[childID].Children, leafID)
-				channels[leafID] = &channel{
-					ID:           leafID,
-					Name:         fmt.Sprintf("%s/%02d/%02d", name, j+1, k+1),
-					ParentID:     childID,
+			// 収容力を満たす branching factor f を求める
+			// 収容容量 capacity = 5f + 10f^2 + 20f^3 + 40f^4
+			f := 1
+			for {
+				capacity := 5*f + 10*f*f + 20*f*f*f + 40*f*f*f*f
+				if capacity >= alloc {
+					break
+				}
+				f++
+			}
+
+			limit1 := 5 * f
+			limit2 := 2 * f
+			limit3 := 2 * f
+			limit4 := 2 * f
+
+			var levels [6][]string
+			levels[1] = []string{rootID}
+
+			childCounter := make(map[string]int)
+
+			for j := 0; j < alloc; j++ {
+				var targetDepth int
+				var parentID string
+
+				for d := 2; d <= 5; d++ {
+					parentLimit := 0
+					switch d - 1 {
+					case 1:
+						parentLimit = limit1
+					case 2:
+						parentLimit = limit2
+					case 3:
+						parentLimit = limit3
+					case 4:
+						parentLimit = limit4
+					}
+
+					for _, pID := range levels[d-1] {
+						if childCounter[pID] < parentLimit {
+							targetDepth = d
+							parentID = pID
+							break
+						}
+					}
+					if targetDepth != 0 {
+						break
+					}
+				}
+
+				if targetDepth == 0 {
+					targetDepth = 5
+					parentID = levels[4][len(levels[4])-1]
+				}
+
+				childCounter[parentID]++
+				idx := childCounter[parentID]
+
+				var nodeID string
+				var nodeName string
+				switch targetDepth {
+				case 2:
+					nodeID = fmt.Sprintf("%s-ch-%d", parentID, idx)
+					nodeName = fmt.Sprintf("%s/%02d", rootNames[i], idx)
+				case 3:
+					nodeID = fmt.Sprintf("%s-sub-%d", parentID, idx)
+					parentChan := channels[parentID]
+					nodeName = fmt.Sprintf("%s/%02d", parentChan.Name, idx)
+				case 4:
+					nodeID = fmt.Sprintf("%s-leaf-%d", parentID, idx)
+					parentChan := channels[parentID]
+					nodeName = fmt.Sprintf("%s/%02d", parentChan.Name, idx)
+				case 5:
+					nodeID = fmt.Sprintf("%s-deep-%d", parentID, idx)
+					parentChan := channels[parentID]
+					nodeName = fmt.Sprintf("%s/%02d", parentChan.Name, idx)
+				}
+
+				channels[parentID].Children = append(channels[parentID].Children, nodeID)
+				channels[nodeID] = &channel{
+					ID:           nodeID,
+					Name:         nodeName,
+					ParentID:     parentID,
+					Children:     []string{},
 					IslandID:     i,
-					Depth:        3,
+					Depth:        targetDepth,
 					LastSyncTime: now,
 				}
+				levels[targetDepth] = append(levels[targetDepth], nodeID)
 			}
 		}
 	}
@@ -78,7 +173,7 @@ func (sm *stateManager) initJSON() ([]byte, error) {
 			ID:       ch.ID,
 			Name:     ch.Name,
 			ParentID: ch.ParentID,
-			Children: append([]string(nil), ch.Children...),
+			Children: append([]string{}, ch.Children...),
 			IslandID: ch.IslandID,
 			Depth:    ch.Depth,
 		}

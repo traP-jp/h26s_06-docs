@@ -7,7 +7,7 @@ import (
 
 // newServer は HTTP ハンドラが共有する依存関係とデモ用初期データを準備します。
 func newServer(cfg config) (*server, error) {
-	sm := newStateManager()
+	sm := newStateManager(cfg.mockVertexCount)
 	initBytes, err := sm.initJSON()
 	if err != nil {
 		return nil, err

@@ -101,3 +101,37 @@ func TestIsTriggerForActiveChannel(t *testing.T) {
 		})
 	}
 }
+
+func TestNewStateManagerVertexCount(t *testing.T) {
+	tests := []int{-1, 1, 5, 10, 129, 500, 7000}
+	for _, tc := range tests {
+		sm := newStateManager(tc)
+		got := len(sm.channels)
+		expected := tc
+		if tc < 1 {
+			expected = 129
+		}
+		if got != expected {
+			t.Errorf("newStateManager(%d) produced %d channels, want %d", tc, got, expected)
+		}
+		for id, ch := range sm.channels {
+			if ch.Depth > 5 {
+				t.Errorf("channel %s has depth %d, which exceeds maximum 5", id, ch.Depth)
+			}
+		}
+
+		initBytes, err := sm.initJSON()
+		if err != nil {
+			t.Fatalf("initJSON failed: %v", err)
+		}
+		var payload initPayload
+		if err := json.Unmarshal(initBytes, &payload); err != nil {
+			t.Fatalf("json.Unmarshal failed: %v", err)
+		}
+		for id, ch := range payload.Channels {
+			if ch.Children == nil {
+				t.Errorf("channel %s has nil (null) children", id)
+			}
+		}
+	}
+}
