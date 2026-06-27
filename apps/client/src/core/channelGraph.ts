@@ -11,6 +11,10 @@ const PALETTE = [
     "#a33ce8",
     "#e8f0ff",
 ];
+const DENSE_CHILD_THRESHOLD = 24;
+const DENSE_EMPHASIZED_CHILDREN = 12;
+const CONDENSED_EMPHASIS = 0.22;
+
 export interface ChannelNode {
     index: number;
     id: string;
@@ -29,6 +33,8 @@ export interface ChannelNode {
     targetZ: number;
     visibilityAlpha: number;
     isLayoutActive: boolean;
+    isExpansionOrigin: boolean;
+    emphasis: number;
     color: string;
 }
 
@@ -64,6 +70,8 @@ export class ChannelGraph {
                 targetZ: 0,
                 visibilityAlpha: 0,
                 isLayoutActive: false,
+                isExpansionOrigin: false,
+                emphasis: 1,
                 color:
                     channel.id === "grand_root"
                         ? "#ffffff"
@@ -171,10 +179,18 @@ export class ChannelGraph {
     }
 
     private readonly clickedIds = new Set<string>();
+    private emphasisGeneration = 0;
+    private lastVisibilitySelection: string | null | undefined;
 
-    updateVisibility(selectedId?: string, k: number = 4) {
+    updateVisibility(selectedId?: string, k: number = 3) {
         let changed = false;
         const activePaths = new Set<string>();
+        const requiredEmphasisIds = new Set<string>();
+        const normalizedSelection = selectedId ?? null;
+        if (this.lastVisibilitySelection !== normalizedSelection) {
+            this.lastVisibilitySelection = normalizedSelection;
+            this.emphasisGeneration += 1;
+        }
 
         if (!selectedId) {
             this.clickedIds.clear();
@@ -189,10 +205,13 @@ export class ChannelGraph {
             }
             this.clickedIds.add(selectedId);
 
-            for (const p of path) activePaths.add(p.id);
+            for (const p of path) {
+                activePaths.add(p.id);
+                requiredEmphasisIds.add(p.id);
+            }
 
             const traverse = (nodeIndex: number, level: number) => {
-                if (level > 2) return;
+                if (level > 1) return;
                 const node = this.nodes[nodeIndex];
                 if (!node) return;
                 activePaths.add(node.id);
@@ -207,7 +226,14 @@ export class ChannelGraph {
             }
         }
 
+        const emphasizedIds = this.pickDenseChildren(requiredEmphasisIds);
         for (const node of this.nodes) {
+            const isExpansionOrigin = node.id === selectedId && node.children.length > 0;
+            if (node.isExpansionOrigin !== isExpansionOrigin) {
+                node.isExpansionOrigin = isExpansionOrigin;
+                changed = true;
+            }
+
             let shouldBeActive = false;
             if (node.depth < k) {
                 shouldBeActive = true;
@@ -226,9 +252,9 @@ export class ChannelGraph {
                         node.x = parent.x;
                         node.y = parent.y;
                         node.z = parent.z;
-                        node.targetX = parent.x;
-                        node.targetY = parent.y;
-                        node.targetZ = parent.z;
+                        node.targetX = parent.targetX;
+                        node.targetY = parent.targetY;
+                        node.targetZ = parent.targetZ;
                     }
                 } else if (!shouldBeActive && node.isLayoutActive) {
                     const parent = node.parentId ? this.get(node.parentId) : undefined;
@@ -241,8 +267,43 @@ export class ChannelGraph {
                 node.isLayoutActive = shouldBeActive;
                 changed = true;
             }
+
+            const emphasis = emphasizedIds.has(node.id) ? 1 : CONDENSED_EMPHASIS;
+            if (node.emphasis !== emphasis) {
+                node.emphasis = emphasis;
+                changed = true;
+            }
         }
         return changed;
+    }
+
+    private pickDenseChildren(requiredIds: ReadonlySet<string>) {
+        const emphasizedIds = new Set(this.nodes.map(node => node.id));
+
+        for (const parent of this.nodes) {
+            if (parent.children.length <= DENSE_CHILD_THRESHOLD) continue;
+
+            const candidates = parent.children
+                .map(index => this.nodes[index])
+                .filter((node): node is ChannelNode => node !== undefined)
+                .sort(
+                    (left, right) =>
+                        emphasisRank(left.index, parent.index, this.emphasisGeneration) -
+                        emphasisRank(right.index, parent.index, this.emphasisGeneration)
+                );
+
+            for (const child of candidates) emphasizedIds.delete(child.id);
+            for (const child of candidates.slice(0, DENSE_EMPHASIZED_CHILDREN)) {
+                emphasizedIds.add(child.id);
+            }
+            for (const child of candidates) {
+                if (requiredIds.has(child.id) || child.targetScore > 10) {
+                    emphasizedIds.add(child.id);
+                }
+            }
+        }
+
+        return emphasizedIds;
     }
 
     update(deltaSeconds: number) {
@@ -273,6 +334,14 @@ export class ChannelGraph {
         if (this.visualEvents.length >= 128) this.visualEvents.shift();
         this.visualEvents.push(event);
     }
+}
+
+function emphasisRank(index: number, parentIndex: number, generation: number) {
+    let value = index ^ Math.imul(parentIndex + 1, 0x9e37_79b1);
+    value ^= Math.imul(generation + 1, 0x85eb_ca6b);
+    value = Math.imul(value ^ (value >>> 16), 0x7feb_352d);
+    value = Math.imul(value ^ (value >>> 15), 0x846c_a68b);
+    return (value ^ (value >>> 16)) >>> 0;
 }
 
 function orderChannels(channels: ChannelDictionary) {

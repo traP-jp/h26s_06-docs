@@ -282,8 +282,6 @@ function createBeam(scene: Scene): BeamEffect {
     scene.add(line);
     return {
         line,
-        from: new Vector3(),
-        to: new Vector3(),
         active: false,
         startedAt: 0,
         duration: 0,
@@ -305,7 +303,7 @@ function createPulse(scene: Scene): PulseEffect {
     );
     mesh.visible = false;
     scene.add(mesh);
-    return { mesh, points: [], active: false, startedAt: 0, duration: 0, delay: 0 };
+    return { mesh, active: false, startedAt: 0, duration: 0, delay: 0 };
 }
 
 function acquire<T extends TimedEffect>(pool: T[]) {

@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import { audioManager } from "./audio/audioManager.ts";
 import GalaxyCanvas from "./components/GalaxyCanvas.vue";
 import { useAppState } from "./composables/useAppState";
 import { ChannelGraph } from "./core/channelGraph";
+import { beginLogin, fetchCurrentUser, logout } from "./services/auth";
 import { calculateChannelLayout } from "./services/channelLayout";
 import { EventStream } from "./services/eventStream";
-import { audioManager } from "./audio/audioManager";
+import type { AuthUser } from "./types/api";
+
+type AuthState = "checking" | "authenticated" | "unauthenticated" | "error";
+
+const isDemoMode = new URLSearchParams(window.location.search).get("demo") === "1";
 
 let stream: EventStream | undefined;
 let pendingGraph: ChannelGraph | undefined;
@@ -14,6 +20,7 @@ let layoutGeneration = 0;
 let mounted = false;
 let backgroundTimer: ReturnType<typeof setInterval> | undefined;
 let backgroundUpdatedAt = 0;
+let authGeneration = 0;
 
 const {
     graph,
@@ -28,21 +35,36 @@ const {
     selected,
     connectionLabel,
     recordTrigger,
+    resetActivity,
 } = useAppState();
 
+const authState = ref<AuthState>(isDemoMode ? "authenticated" : "checking");
+const authMessage = ref(isDemoMode ? "デモストリームに接続します" : "traQ のログイン状態を確認中");
+const currentUser = ref<AuthUser>();
+const focusId = ref<string | undefined>();
+
+const showAuthCover = computed(() => !isDemoMode && authState.value !== "authenticated");
+const showLoading = computed(() => !showAuthCover.value && !graph.value);
+const accessLabel = computed(() => (isDemoMode ? "DEMO ACCESS" : "traQ OAUTH"));
+const authPrimaryLabel = computed(() =>
+    authState.value === "checking" ? "確認中..." : "traQ でログイン"
+);
+
 // audio settings
-const muted = ref<boolean>(audioManager.muted);
-const masterVolume = ref<number>(audioManager.masterVolume);
-const bgmVolume = ref<number>(audioManager.bgmVolume);
-const postVolume = ref<number>(audioManager.postVolume);
-const moveVolume = ref<number>(audioManager.moveVolume);
+const muted = ref(audioManager.muted);
+const masterVolume = ref(audioManager.masterVolume);
+const bgmVolume = ref(audioManager.bgmVolume);
+const postVolume = ref(audioManager.postVolume);
+const moveVolume = ref(audioManager.moveVolume);
 
 // settings drawer
-const settingsOpen = ref<boolean>(false);
+const settingsOpen = ref(false);
 
-function handleVisibilityChange(): void {
+function handleVisibilityChange() {
+    if (!graph.value) return;
+
     if (document.hidden) {
-        graph.value?.clearVisualEvents();
+        graph.value.clearVisualEvents();
         backgroundUpdatedAt = performance.now();
 
         backgroundTimer = setInterval(() => {
@@ -56,8 +78,8 @@ function handleVisibilityChange(): void {
 
     if (backgroundTimer) clearInterval(backgroundTimer);
     backgroundTimer = undefined;
-    graph.value?.clearVisualEvents();
-    graph.value?.requestSyncSnap();
+    graph.value.clearVisualEvents();
+    graph.value.requestSyncSnap();
 }
 
 function reloadPage(): void {
@@ -135,13 +157,111 @@ function onMove(): void {
     audioManager.playMove();
 }
 
-onMounted(() => {
-    mounted = true;
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+function handleLogin() {
+    beginLogin();
+}
 
+async function handleLogout() {
+    stopStream(true);
+    authState.value = "checking";
+    authMessage.value = "ログアウト中";
+    currentUser.value = undefined;
+    status.value = "ログアウト中";
+
+    try {
+        await logout();
+        authState.value = "unauthenticated";
+        authMessage.value = "ログアウトしました。再度ログインしてください。";
+        connection.value = "closed";
+        status.value = "ログアウトしました";
+    } catch {
+        await retryAuthentication();
+    }
+}
+
+async function retryAuthentication() {
+    if (isDemoMode) return;
+    const authenticated = await refreshAuthentication("ログインが必要です。");
+    if (authenticated) {
+        connectStream();
+    }
+}
+
+function stopStream(clearGraph: boolean) {
+    layoutGeneration += 1;
+    pendingGraph = undefined;
+    stream?.disconnect();
+    stream = undefined;
+    if (clearGraph) {
+        resetActivity();
+    }
+}
+
+async function refreshAuthentication(unauthenticatedMessage: string) {
+    const currentGeneration = ++authGeneration;
+    authState.value = "checking";
+    authMessage.value = "traQ のログイン状態を確認中";
+    status.value = "認証状態を確認中";
+
+    try {
+        const user = await fetchCurrentUser();
+        if (!mounted || currentGeneration !== authGeneration) return false;
+
+        if (!user) {
+            currentUser.value = undefined;
+            authState.value = "unauthenticated";
+            authMessage.value = unauthenticatedMessage;
+            stopStream(true);
+            connection.value = "closed";
+            status.value = "ログインが必要です";
+            return false;
+        }
+
+        currentUser.value = user;
+        authState.value = "authenticated";
+        authMessage.value = `${user.displayName} でログイン中`;
+        return true;
+    } catch (error) {
+        if (!mounted || currentGeneration !== authGeneration) return false;
+
+        currentUser.value = undefined;
+        authState.value = "error";
+        authMessage.value = "認証状態を取得できませんでした。時間をおいて再試行してください。";
+        stopStream(true);
+        connection.value = "closed";
+        status.value = error instanceof Error ? error.message : "認証確認エラー";
+        return false;
+    }
+}
+
+async function handleStreamConnectionError() {
+    if (isDemoMode) return false;
+
+    try {
+        const user = await fetchCurrentUser();
+        if (!user) {
+            currentUser.value = undefined;
+            authState.value = "unauthenticated";
+            authMessage.value = "セッションの有効期限が切れました。再ログインしてください。";
+            stopStream(true);
+            connection.value = "closed";
+            status.value = "セッション切れ";
+            return true;
+        }
+
+        currentUser.value = user;
+        authState.value = "authenticated";
+        return false;
+    } catch {
+        return false;
+    }
+}
+
+function connectStream() {
+    stopStream(false);
+    status.value = isDemoMode ? "デモサーバーへ接続中" : "ライブストリームへ接続中";
     stream = new EventStream({
-        demo: new URLSearchParams(location.search).get("demo") !== "0",
-
+        demo: isDemoMode,
         onState(nextState, message) {
             connection.value = nextState;
             status.value = message;
@@ -164,7 +284,7 @@ onMounted(() => {
             graph.value = nextGraph;
             pendingGraph = undefined;
             connection.value = "open";
-            status.value = "デモストリーム受信中";
+            status.value = isDemoMode ? "デモストリーム受信中" : "ライブストリーム受信中";
         },
 
         onTrigger(trigger) {
@@ -174,9 +294,7 @@ onMounted(() => {
 
         onSync(payload) {
             (pendingGraph ?? graph.value)?.sync(payload.deltas);
-            updatedAt.value = new Date(payload.ts * 1000).toLocaleTimeString(
-                "ja-JP",
-            );
+            updatedAt.value = new Date(payload.ts * 1000).toLocaleTimeString("ja-JP");
 
             if (graph.value) {
                 const changed = graph.value.updateVisibility(selectedId.value);
@@ -184,13 +302,11 @@ onMounted(() => {
                 if (changed) {
                     const generation = ++layoutGeneration;
 
-                    calculateChannelLayout(graph.value.nodes).then(
-                        positions => {
-                            if (generation === layoutGeneration) {
-                                graph.value?.applyLayout(positions);
-                            }
-                        },
-                    );
+                    calculateChannelLayout(graph.value.nodes).then(positions => {
+                        if (generation === layoutGeneration) {
+                            graph.value?.applyLayout(positions);
+                        }
+                    });
                 }
             }
         },
@@ -198,12 +314,24 @@ onMounted(() => {
         onMalformedEvent(eventName) {
             status.value = `${eventName} イベントを解釈できませんでした`;
         },
+        onConnectionError: handleStreamConnectionError,
     });
 
     stream.connect();
-});
+}
 
-const focusId = ref<string | undefined>();
+onMounted(() => {
+    mounted = true;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    if (isDemoMode) {
+        authMessage.value = "デモモードで接続中";
+        connectStream();
+        return;
+    }
+
+    void retryAuthentication();
+});
 
 watch(selectedId, newId => {
     if (!graph.value) {
@@ -227,15 +355,18 @@ watch(selectedId, newId => {
 
 onBeforeUnmount(() => {
     mounted = false;
-    layoutGeneration += 1;
-    stream?.disconnect();
+    authGeneration += 1;
+    stopStream(false);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     if (backgroundTimer) clearInterval(backgroundTimer);
 });
 </script>
 
 <template>
-    <main class="app-shell" @pointerdown.capture.once="unlockAudio">
+    <main
+        class="app-shell"
+        @pointerdown.capture.once="unlockAudio"
+    >
         <button
             type="button"
             class="settingsButton"
@@ -298,9 +429,7 @@ onBeforeUnmount(() => {
                     <div class="volumeControl">
                         <div class="volumeLabel">
                             <label for="master-volume">全体音量</label>
-                            <output>
-                                {{ Math.round(masterVolume * 100) }}%
-                            </output>
+                            <output> {{ Math.round(masterVolume * 100) }}% </output>
                         </div>
                         <input
                             id="master-volume"
@@ -316,9 +445,7 @@ onBeforeUnmount(() => {
                     <div class="volumeControl">
                         <div class="volumeLabel">
                             <label for="bgm-volume">BGM</label>
-                            <output>
-                                {{ Math.round(bgmVolume * 100) }}%
-                            </output>
+                            <output> {{ Math.round(bgmVolume * 100) }}% </output>
                         </div>
                         <input
                             id="bgm-volume"
@@ -334,9 +461,7 @@ onBeforeUnmount(() => {
                     <div class="volumeControl">
                         <div class="volumeLabel">
                             <label for="post-volume">投稿音</label>
-                            <output>
-                                {{ Math.round(postVolume * 100) }}%
-                            </output>
+                            <output> {{ Math.round(postVolume * 100) }}% </output>
                         </div>
                         <input
                             id="post-volume"
@@ -352,9 +477,7 @@ onBeforeUnmount(() => {
                     <div class="volumeControl">
                         <div class="volumeLabel">
                             <label for="move-volume">移動音</label>
-                            <output>
-                                {{ Math.round(moveVolume * 100) }}%
-                            </output>
+                            <output> {{ Math.round(moveVolume * 100) }}% </output>
                         </div>
                         <input
                             id="move-volume"
@@ -379,10 +502,16 @@ onBeforeUnmount(() => {
                 <section class="settingsGroup">
                     <h3>テスト再生</h3>
                     <div class="soundTestButtons">
-                        <button type="button" @click="onPost">
+                        <button
+                            type="button"
+                            @click="onPost"
+                        >
                             投稿音
                         </button>
-                        <button type="button" @click="onMove">
+                        <button
+                            type="button"
+                            @click="onMove"
+                        >
                             移動音
                         </button>
                     </div>
@@ -400,12 +529,46 @@ onBeforeUnmount(() => {
             @render-error="renderError = $event"
         />
 
-        <div v-else class="loading">
+        <div
+            v-else-if="showLoading"
+            class="loading"
+        >
             <span class="loading__orbit" />
             <p>CHANNEL UNIVERSE を構築中</p>
         </div>
 
-        <div v-if="renderError" class="render-error ui-panel">
+        <div
+            v-if="showAuthCover"
+            class="auth-cover"
+        >
+            <div class="auth-cover__card ui-panel">
+                <p class="eyebrow">{{ accessLabel }}</p>
+                <h2>Live Stream Requires traQ Login</h2>
+                <p class="auth-cover__message">{{ authMessage }}</p>
+                <div class="auth-cover__actions">
+                    <button
+                        :disabled="authState === 'checking'"
+                        @click="handleLogin"
+                    >
+                        {{ authPrimaryLabel }}
+                    </button>
+                    <button
+                        class="auth-cover__secondary"
+                        @click="retryAuthentication"
+                    >
+                        再確認
+                    </button>
+                </div>
+                <p class="auth-cover__hint">
+                    URL に ?demo=1 を付けるとデモストリームへ接続できます。
+                </p>
+            </div>
+        </div>
+
+        <div
+            v-if="renderError"
+            class="render-error ui-panel"
+        >
             <p class="eyebrow">RENDERER ERROR</p>
             <strong>{{ renderError }}</strong>
             <button @click="reloadPage">再読み込み</button>
@@ -413,14 +576,46 @@ onBeforeUnmount(() => {
 
         <header class="topbar ui-panel">
             <div>
+                <img
+                    src="./assets/Qosmos_logoless.png"
+                    alt="Qosmos logo"
+                    class="topbar-logo"
+                />
                 <p class="eyebrow">traQ ACTIVITY OBSERVATORY</p>
-                <h1>Channel Universe</h1>
+                <h1>Qosmos</h1>
             </div>
-            <div class="connection" :data-state="connection">
-                <span class="connection__dot" />
-                <div>
-                    <strong>{{ connectionLabel }}</strong>
-                    <small>{{ status }}</small>
+            <div class="topbar__meta">
+                <div
+                    class="connection"
+                    :data-state="connection"
+                >
+                    <span class="connection__dot" />
+                    <div>
+                        <strong>{{ connectionLabel }}</strong>
+                        <small>{{ status }}</small>
+                    </div>
+                </div>
+                <div
+                    v-if="isDemoMode"
+                    class="session-pill"
+                >
+                    <span class="session-pill__label">MODE</span>
+                    <strong>DEMO</strong>
+                </div>
+                <div
+                    v-else-if="currentUser"
+                    class="session-pill"
+                >
+                    <img
+                        v-if="currentUser.iconUrl"
+                        :src="currentUser.iconUrl"
+                        :alt="currentUser.displayName"
+                    />
+                    <div>
+                        <span class="session-pill__label">LOGGED IN</span>
+                        <strong>{{ currentUser.displayName }}</strong>
+                    </div>
+                    <button @click="handleLogout">LOG OUT</button>
                 </div>
             </div>
         </header>
@@ -460,8 +655,14 @@ onBeforeUnmount(() => {
             </button>
         </div>
 
-        <aside v-if="selected" class="details ui-panel">
-            <button class="details__close" @click="selectedId = undefined">
+        <aside
+            v-if="selected"
+            class="details ui-panel"
+        >
+            <button
+                class="details__close"
+                @click="selectedId = undefined"
+            >
                 ×
             </button>
             <p class="eyebrow">SELECTED CHANNEL</p>
@@ -484,9 +685,7 @@ onBeforeUnmount(() => {
         </aside>
 
         <footer class="hint">
-            <span>DRAG</span> 移動
-            <span>SCROLL</span> 拡大・縮小
-            <span>CLICK</span> 詳細
+            <span>DRAG</span> 移動 <span>SCROLL</span> 拡大・縮小 <span>CLICK</span> 詳細
         </footer>
     </main>
 </template>

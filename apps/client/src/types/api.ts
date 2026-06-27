@@ -19,3 +19,10 @@ export interface SyncPayload {
 }
 
 export type ConnectionState = "connecting" | "open" | "closed";
+
+export interface AuthUser {
+    id?: string;
+    name: string;
+    displayName: string;
+    iconUrl?: string;
+}
