@@ -40,6 +40,8 @@ const DEFAULT_SETTINGS: AudioSettings = {
     sfxVolume: 0.1,
 };
 
+const VOLUME_FADE_DURATION_MS = 600;
+
 class AudioManager {
     public unlocked: boolean;
 
@@ -53,6 +55,7 @@ class AudioManager {
     private lastPlayedAt: Record<SfxName, number>;
     private cooldownMs: Record<SfxName, number>;
     private maxActiveSfx: Record<SfxName | "total", number>;
+    private volumeAnimationFrame: number | undefined;
 
     constructor() {
         this.unlocked = false;
@@ -154,12 +157,52 @@ class AudioManager {
         }
     }
 
-    applyVolumes(): void {
-        this.bgm.volume = this.clampVolume(this.masterVolume * this.bgmVolume);
-
-        for (const audio of [...this.sfxPools.post, ...this.sfxPools.move]) {
-            audio.volume = this.clampVolume(this.masterVolume * this.sfxVolume);
+    applyVolumes(durationMs = 0): void {
+        if (this.volumeAnimationFrame !== undefined) {
+            cancelAnimationFrame(this.volumeAnimationFrame);
+            this.volumeAnimationFrame = undefined;
         }
+
+        const targets = new Map<HTMLAudioElement, number>([
+            [this.bgm, this.muted ? 0 : this.clampVolume(this.masterVolume * this.bgmVolume)],
+            ...[...this.sfxPools.post, ...this.sfxPools.move].map(
+                audio =>
+                    [
+                        audio,
+                        this.muted ? 0 : this.clampVolume(this.masterVolume * this.sfxVolume),
+                    ] as const
+            ),
+        ]);
+
+        if (durationMs <= 0) {
+            for (const [audio, targetVolume] of targets) {
+                audio.volume = targetVolume;
+            }
+            this.applyMuted();
+            return;
+        }
+
+        const initialVolumes = new Map([...targets.keys()].map(audio => [audio, audio.volume]));
+        const startedAt = performance.now();
+
+        const updateVolumes = (now: number): void => {
+            const progress = Math.min((now - startedAt) / durationMs, 1);
+
+            for (const [audio, targetVolume] of targets) {
+                const initialVolume = initialVolumes.get(audio) ?? targetVolume;
+                audio.volume = initialVolume + (targetVolume - initialVolume) * progress;
+            }
+
+            if (progress < 1) {
+                this.volumeAnimationFrame = requestAnimationFrame(updateVolumes);
+                return;
+            }
+
+            this.volumeAnimationFrame = undefined;
+            this.applyMuted();
+        };
+
+        this.volumeAnimationFrame = requestAnimationFrame(updateVolumes);
     }
 
     unlock({ startBgm = true }: UnlockOptions = {}): void {
@@ -202,25 +245,30 @@ class AudioManager {
     setMuted(muted: boolean): void {
         this.muted = Boolean(muted);
         localStorage.setItem(STORAGE_KEYS.muted, String(this.muted));
-        this.applyMuted();
+
+        if (!this.muted) {
+            this.applyMuted();
+        }
+
+        this.applyVolumes(VOLUME_FADE_DURATION_MS);
     }
 
     setMasterVolume(volume: number): void {
         this.masterVolume = this.clampVolume(volume);
         localStorage.setItem(STORAGE_KEYS.masterVolume, String(this.masterVolume));
-        this.applyVolumes();
+        this.applyVolumes(VOLUME_FADE_DURATION_MS);
     }
 
     setBgmVolume(volume: number): void {
         this.bgmVolume = this.clampVolume(volume);
         localStorage.setItem(STORAGE_KEYS.bgmVolume, String(this.bgmVolume));
-        this.applyVolumes();
+        this.applyVolumes(VOLUME_FADE_DURATION_MS);
     }
 
     setSfxVolume(volume: number): void {
         this.sfxVolume = this.clampVolume(volume);
         localStorage.setItem(STORAGE_KEYS.sfxVolume, String(this.sfxVolume));
-        this.applyVolumes();
+        this.applyVolumes(VOLUME_FADE_DURATION_MS);
     }
 
     resetSettings(): void {
@@ -235,7 +283,7 @@ class AudioManager {
         localStorage.setItem(STORAGE_KEYS.sfxVolume, String(this.sfxVolume));
 
         this.applyMuted();
-        this.applyVolumes();
+        this.applyVolumes(VOLUME_FADE_DURATION_MS);
     }
 
     getSettings(): AudioSettings {
