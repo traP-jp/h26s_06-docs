@@ -19,7 +19,10 @@ export function useAppState() {
         const channel = selectedId.value ? graph.value?.get(selectedId.value) : undefined;
         if (!channel) return undefined;
         const pathNodes = graph.value?.path(channel.id) ?? [];
-        const channelPath = pathNodes.filter(node => node.id !== "grand_root").map(node => node.name).join(" / ");
+        const channelPath = pathNodes
+            .filter(node => node.id !== "grand_root")
+            .map(node => node.name)
+            .join(" / ");
         return {
             ...channel,
             path: `# ${channelPath}`,
