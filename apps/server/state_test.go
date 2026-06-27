@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewStateManagerFromTraqBuildsGrandRootTree(t *testing.T) {
@@ -46,9 +49,254 @@ func TestStateManagerApplyTriggerSkipsDuplicateMovement(t *testing.T) {
 	}
 }
 
+func TestStateManagerApplyTriggerClearsCurrentChannelWithoutPublishing(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "a"}); !ok {
+		t.Fatal("initial movement was not applied")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", From: "a", ClearCurrent: true}); ok {
+		t.Fatal("clear current trigger was published")
+	}
+	state.mu.RLock()
+	current := state.users["u1"].CurrentChannel
+	state.mu.RUnlock()
+	if current != "" {
+		t.Fatalf("CurrentChannel = %q, want empty", current)
+	}
+
+	applied, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "b"})
+	if !ok {
+		t.Fatal("movement after clear was not applied")
+	}
+	if applied.From != "" {
+		t.Fatalf("inferred From = %q, want empty", applied.From)
+	}
+}
+
+func TestStateManagerApplyTriggerIgnoresStaleClearCurrent(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "a"}); !ok {
+		t.Fatal("first movement was not applied")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "b"}); !ok {
+		t.Fatal("second movement was not applied")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", From: "a", ClearCurrent: true}); ok {
+		t.Fatal("stale clear current trigger was published")
+	}
+
+	state.mu.RLock()
+	current := state.users["u1"].CurrentChannel
+	state.mu.RUnlock()
+	if current != "b" {
+		t.Fatalf("CurrentChannel = %q, want b", current)
+	}
+}
+
+func TestStateManagerApplyTriggerSkipsDuplicateMessage(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	trigger := triggerPayload{Type: "msg", Ch: "root", MessageID: "message-1"}
+	if _, ok := state.applyTrigger(trigger); !ok {
+		t.Fatal("first message was not applied")
+	}
+	if _, ok := state.applyTrigger(trigger); ok {
+		t.Fatal("duplicate message was applied")
+	}
+
+	state.mu.RLock()
+	score := state.channels["root"].Score
+	state.mu.RUnlock()
+	if score != messageScoreAmount {
+		t.Fatalf("root score = %v, want %v", score, messageScoreAmount)
+	}
+}
+
+func TestStateManagerKeepsOnlyRecentMessageIDs(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	for i := 0; i < recentMessageIDLimit+1; i++ {
+		trigger := triggerPayload{Type: "msg", Ch: "root", MessageID: fmt.Sprintf("message-%d", i)}
+		if _, ok := state.applyTrigger(trigger); !ok {
+			t.Fatalf("message %d was not applied", i)
+		}
+	}
+
+	state.mu.RLock()
+	seenCount := len(state.seenMessageIDs)
+	recentCount := len(state.recentMessageIDs)
+	_, firstStillSeen := state.seenMessageIDs["message-0"]
+	state.mu.RUnlock()
+	if seenCount != recentMessageIDLimit {
+		t.Fatalf("seen message IDs = %d, want %d", seenCount, recentMessageIDLimit)
+	}
+	if recentCount != recentMessageIDLimit {
+		t.Fatalf("recent message IDs = %d, want %d", recentCount, recentMessageIDLimit)
+	}
+	if firstStillSeen {
+		t.Fatal("oldest message ID was not evicted")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "msg", Ch: "root", MessageID: "message-0"}); !ok {
+		t.Fatal("evicted message ID was still treated as duplicate")
+	}
+}
+
+func TestViewerPollWeightUsesCurrentScoreAndElapsed(t *testing.T) {
+	if got := viewerPollWeight(0, 0); got != 0 {
+		t.Fatalf("weight = %v, want 0", got)
+	}
+	if got := viewerPollWeight(messageScoreAmount, 10); got < 0.469 || got > 0.471 {
+		t.Fatalf("weight = %v, want 0.47", got)
+	}
+	if got := viewerPollWeight(2*messageScoreAmount, 100); got != 1.02 {
+		t.Fatalf("weight = %v, want 1.02", got)
+	}
+}
+
+func TestNormalizeWeightedChannelsSumsToOne(t *testing.T) {
+	normalized := normalizeWeightedChannels([]weightedChannel{
+		{id: "a", rawWeight: 2},
+		{id: "b", rawWeight: 3},
+		{id: "c", rawWeight: 0},
+	})
+	if len(normalized) != 2 {
+		t.Fatalf("normalized channels = %d, want 2", len(normalized))
+	}
+	total := 0.0
+	for _, channel := range normalized {
+		total += channel.normalizedWeight
+	}
+	if total < 0.999 || total > 1.001 {
+		t.Fatalf("normalized total = %v, want 1", total)
+	}
+}
+
+func TestStateManagerSampleViewerChannelsCapsInitialSelection(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b"},
+		{ID: "c", Name: "c"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+	candidates := []traqChannel{
+		{ID: "a", Name: "a"},
+		{ID: "b", Name: "b"},
+		{ID: "c", Name: "c"},
+	}
+
+	selected := state.sampleViewerChannels(candidates, 2)
+	if len(selected) != 2 {
+		t.Fatalf("selected channels = %d, want 2", len(selected))
+	}
+	for _, selectedChannel := range selected {
+		state.mu.RLock()
+		lastViewTime := state.channels[selectedChannel.ID].LastViewTime
+		state.mu.RUnlock()
+		if lastViewTime.IsZero() {
+			t.Fatalf("selected channel %s did not record last view time", selectedChannel.ID)
+		}
+	}
+}
+
+func TestStateManagerSyncPayloadCapsDeltasAtOneHundred(t *testing.T) {
+	channels := make([]traqChannel, 0, maxSyncPayloadDeltas+1)
+	for i := 0; i < maxSyncPayloadDeltas+1; i++ {
+		id := fmt.Sprintf("ch-%d", i)
+		channels = append(channels, traqChannel{ID: id, Name: id})
+	}
+	state, err := newStateManagerFromTraq(channels)
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+	state.mu.Lock()
+	now := time.Now()
+	for id, ch := range state.channels {
+		if id == grandRootID {
+			continue
+		}
+		ch.Score = 10
+		ch.LastSyncScore = 0
+		ch.LastSyncTime = now.Add(-time.Minute)
+		ch.LastDecayTime = now
+	}
+	state.mu.Unlock()
+
+	payload := state.syncPayload()
+	if len(payload.Deltas) != maxSyncPayloadDeltas {
+		t.Fatalf("sync deltas = %d, want %d", len(payload.Deltas), maxSyncPayloadDeltas)
+	}
+}
+
+func TestStateManagerSyncPayloadDoesNotDoubleDecayUnselectedChannels(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "selected", Name: "selected"},
+		{ID: "unselected", Name: "unselected"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	oldDecay := time.Now().Add(-scoreDecayTimeScale * time.Second)
+	unselectedSync := time.Now().Add(20 * time.Minute)
+	want := 10 * math.Exp(-scoreDecayTimeScale/scoreDecayTimeScale)
+	state.mu.Lock()
+	state.channels["selected"].Score = 10
+	state.channels["selected"].LastSyncScore = 0
+	state.channels["selected"].LastSyncTime = time.Now().Add(-time.Minute)
+	state.channels["selected"].LastDecayTime = oldDecay
+	state.channels["unselected"].Score = 10
+	state.channels["unselected"].LastSyncScore = want
+	state.channels["unselected"].LastSyncTime = unselectedSync
+	state.channels["unselected"].LastDecayTime = oldDecay
+	state.mu.Unlock()
+
+	payload := state.syncPayload()
+	if _, ok := payload.Deltas["selected"]; !ok {
+		t.Fatal("selected channel was not synced")
+	}
+
+	state.mu.RLock()
+	unselected := state.channels["unselected"]
+	score := unselected.Score
+	lastSync := unselected.LastSyncTime
+	lastDecay := unselected.LastDecayTime
+	state.mu.RUnlock()
+	if !lastDecay.After(oldDecay) {
+		t.Fatal("unselected channel decay time was not updated")
+	}
+	if !lastSync.Equal(unselectedSync) {
+		t.Fatal("unselected channel sync time was updated")
+	}
+	if math.Abs(score-want) > 0.1 {
+		t.Fatalf("unselected score = %v, want about %v", score, want)
+	}
+}
+
 func TestEnsureLiveChannelDataKeepsDemoAndLiveStateSeparate(t *testing.T) {
 	hits := 0
-	srv, err := newServer(config{traqBaseURL: "https://example.test"})
+	srv, err := newServer(config{traqBaseURL: "https://example.test", traqBotAccessToken: "bot-token"})
 	if err != nil {
 		t.Fatalf("newServer returned error: %v", err)
 	}

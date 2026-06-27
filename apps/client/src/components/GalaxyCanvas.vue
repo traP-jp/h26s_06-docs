@@ -25,6 +25,7 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
+import { calculateCameraAvoidance } from "../core/cameraAvoidance";
 import type { ChannelGraph } from "../core/channelGraph";
 import { NodeBuffer } from "../core/nodeBuffer";
 import { EffectPool } from "../rendering/effectPool";
@@ -57,6 +58,7 @@ let cameraTransition:
           startTarget: Vector3;
           direction: Vector3;
           distance: number;
+          positionOffset: Vector3;
           nodeId: string;
       }
     | undefined;
@@ -214,7 +216,9 @@ function updateEdges(now: number) {
         const parent = props.graph.get(node.parentId);
         if (!parent) continue;
 
-        const alpha = Math.min(parent.visibilityAlpha, node.visibilityAlpha);
+        const alpha =
+            Math.min(parent.visibilityAlpha, node.visibilityAlpha) *
+            Math.min(parent.emphasis, node.emphasis);
 
         const wxParent = Math.sin(now * 0.0008 + parent.index * 1.2) * 1.5;
         const wyParent = Math.cos(now * 0.0009 + parent.index * 0.8) * 1.5;
@@ -334,13 +338,13 @@ function updateCameraTarget(id: string | undefined) {
         const direction = camera.position.clone().sub(controls.target);
         if (direction.lengthSq() < 0.001) direction.set(0, 0, 1);
         direction.normalize();
-
         cameraTransition = {
             startedAt: performance.now(),
             startPosition: camera.position.clone(),
             startTarget: controls.target.clone(),
             direction,
             distance: 800,
+            positionOffset: new Vector3(),
             nodeId: "grand_root",
         };
         return;
@@ -353,22 +357,46 @@ function updateCameraTarget(id: string | undefined) {
     direction.normalize();
 
     let descendantsCount = 0;
-    const countTraverse = (idx: number, level: number) => {
+    const countTraverse = (index: number, level: number) => {
         if (level > 2) return;
-        const n = props.graph.nodes[idx];
-        if (n) {
-            descendantsCount++;
-            for (const c of n.children) countTraverse(c, level + 1);
-        }
+        const descendant = props.graph.nodes[index];
+        if (!descendant) return;
+        descendantsCount += 1;
+        for (const childIndex of descendant.children) countTraverse(childIndex, level + 1);
     };
-    for (const childIdx of node.children) {
-        countTraverse(childIdx, 1);
-    }
+    for (const childIndex of node.children) countTraverse(childIndex, 1);
 
     const estimatedRadius = Math.max(30, Math.sqrt(descendantsCount) * 16);
-    const requiredDistance = estimatedRadius * 5 + 120;
-
+    const requiredDistance = estimatedRadius * 2.8 + 120;
     const distance = Math.max(requiredDistance, camera.position.distanceTo(controls.target) * 0.7);
+    const target = new Vector3(node.targetX, node.targetY, node.targetZ);
+    const basePosition = target.clone().addScaledVector(direction, distance);
+    const pathIds = new Set(props.graph.path(id).map(pathNode => pathNode.id));
+    const obstacles = props.graph.nodes
+        .filter(
+            candidate =>
+                !pathIds.has(candidate.id) &&
+                candidate.visibilityAlpha > 0.15 &&
+                candidate.isLayoutActive
+        )
+        .map(candidate => ({
+            position: {
+                x: candidate.targetX,
+                y: candidate.targetY,
+                z: candidate.targetZ,
+            },
+            radius: cameraObstacleRadius(candidate),
+        }))
+        .filter(obstacle => obstacle.radius >= 4.5);
+    const offset = calculatePathAvoidance(
+        basePosition,
+        props.graph.path(id).map(pathNode => ({
+            x: pathNode.targetX,
+            y: pathNode.targetY,
+            z: pathNode.targetZ,
+        })),
+        obstacles
+    );
 
     cameraTransition = {
         startedAt: performance.now(),
@@ -376,8 +404,38 @@ function updateCameraTarget(id: string | undefined) {
         startTarget: controls.target.clone(),
         direction,
         distance,
+        positionOffset: new Vector3(offset.x, offset.y, offset.z),
         nodeId: id,
     };
+}
+
+function cameraObstacleRadius(node: ChannelGraph["nodes"][number]) {
+    const heat = node.relativeScore;
+    const baseScale =
+        node.id === "grand_root"
+            ? 4.2
+            : node.depth <= 1
+              ? 3
+              : Math.max(0.42, 2.4 * 0.72 ** (node.depth - 1));
+    return (baseScale + heat * 6) * node.emphasis * node.visibilityAlpha;
+}
+
+function calculatePathAvoidance(
+    cameraPosition: { x: number; y: number; z: number },
+    path: readonly { x: number; y: number; z: number }[],
+    obstacles: Parameters<typeof calculateCameraAvoidance>[2]
+) {
+    let strongest = { x: 0, y: 0, z: 0 };
+    let strongestLength = 0;
+    for (const pathNode of path) {
+        const offset = calculateCameraAvoidance(cameraPosition, pathNode, obstacles);
+        const length = Math.hypot(offset.x, offset.y, offset.z);
+        if (length > strongestLength) {
+            strongest = offset;
+            strongestLength = length;
+        }
+    }
+    return strongest;
 }
 
 function updateSelectionPath(id: string | undefined) {
@@ -411,7 +469,8 @@ function updateCameraTransition(now: number) {
     const target = new Vector3(node.targetX, node.targetY, node.targetZ);
     const position = target
         .clone()
-        .addScaledVector(cameraTransition.direction, cameraTransition.distance);
+        .addScaledVector(cameraTransition.direction, cameraTransition.distance)
+        .add(cameraTransition.positionOffset);
 
     camera.position.lerpVectors(cameraTransition.startPosition, position, eased);
     controls.target.lerpVectors(cameraTransition.startTarget, target, eased);
@@ -428,7 +487,8 @@ function onPointerMove(event: PointerEvent) {
 function onPointerUp(event: PointerEvent) {
     if (pointerMoved || !renderer || !camera || !nodes) return;
     const bounds = renderer.domElement.getBoundingClientRect();
-    emit("select", pickNodeAt(event.clientX - bounds.left, event.clientY - bounds.top, bounds));
+    const pickedId = pickNodeAt(event.clientX - bounds.left, event.clientY - bounds.top, bounds);
+    emit("select", pickedId === props.selectedId ? undefined : pickedId);
 }
 
 function pickNodeAt(x: number, y: number, bounds: DOMRect) {
@@ -444,7 +504,7 @@ function pickNodeAt(x: number, y: number, bounds: DOMRect) {
 
         if (
             props.activeOnly &&
-            node.currentScore <= 0.08 &&
+            node.relativeScore <= 0.08 &&
             node.id !== "grand_root" &&
             node.id !== props.selectedId
         ) {

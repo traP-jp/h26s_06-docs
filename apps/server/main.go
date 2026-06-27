@@ -15,11 +15,13 @@ func main() {
 	}
 	defer srv.close()
 
-	log.Printf("listening on %s", cfg.addr)
 	if cfg.oauthClientID == "" {
-		log.Printf("TRAQ_CLIENT_ID is empty; live mode OAuth is disabled")
+		traqLogWarn("TRAQ_CLIENT_ID is empty; live mode OAuth is disabled")
 	}
-	if err := http.ListenAndServe(cfg.addr, logRequests(srv.routes())); err != nil {
+	if cfg.traqBotAccessToken == "" {
+		traqLogWarn("TRAQ_BOT_ACCESS_TOKEN is empty; viewer polling is disabled")
+	}
+	if err := http.ListenAndServe(cfg.addr, srv.routes()); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("起動しました")

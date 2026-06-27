@@ -27,7 +27,7 @@ type Channel struct {
 	ID            string
 	ParentID      string   // 最上位ノードは GrandRootID を指す
 	Children      []string // 子チャンネルIDのリスト
-	Score         float64  // バックエンド側が持つ「正解の盛り上がり度」
+	Score         float64  // バックエンド側が持つ相対的な「盛り上がり度」
 	LastSyncScore float64  // 前回フロントへ送信した時点のスコア
 	LastSyncTime  time.Time// 前回フロントへ送信した時刻
 }
@@ -84,15 +84,17 @@ traQからのイベント受信時、インメモリの `users["userID"].Current
 
 ### 3.3 確率的な同期イベントの送信アルゴリズム
 
-全チャンネルのスコアが常に減衰し続ける仕様において、差分抽出を効果的に機能させるため、**「スコア変化量」と「経過時間」に基づく確率的同期**を行う。
+全チャンネルのスコアが常に減衰し続ける仕様において、差分抽出を効果的に機能させるため、**「スコア変化量」と「経過時間」に基づく重み付き同期**を行う。
 
-30秒ごとのTicker処理において、各チャンネルが `sync` ペイロードに含まれる確率 $P$ を以下の数式で算出する。
+30秒ごとのTicker処理において、各チャンネルの重み $W$ を以下の数式で算出する。算出した重みは全候補で正規化し、最大100件を重み付き抽選で `sync` ペイロードに含める。
 
-$$P = \min\left(1.0, \alpha \times |\Delta S| + \beta \times \Delta T\right)$$
+$$W = \alpha \times |\Delta S| + \beta \times \Delta T$$
 
 * $\Delta S$: 前回同期時からのスコア変化量 (`math.Abs(Score - LastSyncScore)`)
 * $\Delta T$: 前回同期時からの経過時間（秒）
-* $\alpha, \beta$: 確率を調整する重み係数
+* $\alpha, \beta$: 抽選重みを調整する係数
+
+`Score` は固定上限を持たない相対値として扱う。投稿は対象チャンネルに `1.0`、閲覧移動は `0.25` を加算し、親チャンネルへは階層ごとに `0.45` 倍して伝播する。減衰は指数減衰で、時定数は約300秒とする。
 
 ```go
 func generateSyncPayload() {
@@ -103,13 +105,14 @@ func generateSyncPayload() {
 		deltaS := math.Abs(ch.Score - ch.LastSyncScore)
 		deltaT := now.Sub(ch.LastSyncTime).Seconds()
 
-		prob := (alpha * deltaS) + (beta * deltaT)
+		weight := (alpha * deltaS) + (beta * deltaT)
 
-		if rand.Float64() < prob {
-			deltas[ch.ID] = ch.Score
-			ch.LastSyncScore = ch.Score
-			ch.LastSyncTime = now
-		}
+		weighted = append(weighted, WeightedChannel{ID: ch.ID, Weight: weight})
+	}
+	for _, ch := range selectWeightedChannels(weighted, 100) {
+		deltas[ch.ID] = ch.Score
+		ch.LastSyncScore = ch.Score
+		ch.LastSyncTime = now
 	}
 	// deltas を送信キューへ投入
 }

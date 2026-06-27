@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -16,18 +15,19 @@ import (
 )
 
 type viewerPoller struct {
-	mu            sync.Mutex
-	channels      []traqChannel
-	messageWeight map[string]float64
-	maxPerTick    int
+	channels   []traqChannel
+	maxPerTick int
+	state      *stateManager
 }
 
 type weightedChannel struct {
-	channel traqChannel
-	weight  float64
+	id               string
+	channel          traqChannel
+	rawWeight        float64
+	normalizedWeight float64
 }
 
-func newViewerPoller(channels []traqChannel, maxPerTick int) *viewerPoller {
+func newViewerPoller(channels []traqChannel, maxPerTick int, state *stateManager) *viewerPoller {
 	active := make([]traqChannel, 0, len(channels))
 	for _, ch := range channels {
 		if ch.ID != "" && !ch.Archived {
@@ -37,61 +37,72 @@ func newViewerPoller(channels []traqChannel, maxPerTick int) *viewerPoller {
 	if maxPerTick <= 0 || maxPerTick > len(active) {
 		maxPerTick = len(active)
 	}
-	return &viewerPoller{channels: active, maxPerTick: maxPerTick, messageWeight: map[string]float64{}}
-}
-
-func (p *viewerPoller) noteMessage(channelID string) {
-	if p == nil || channelID == "" {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.messageWeight[channelID] = math.Min(120, p.messageWeight[channelID]+12)
+	return &viewerPoller{channels: active, maxPerTick: maxPerTick, state: state}
 }
 
 func (p *viewerPoller) sampleChannels() []traqChannel {
-	if p == nil {
+	if p == nil || p.state == nil {
 		return nil
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.channels) <= p.maxPerTick {
-		return append([]traqChannel(nil), p.channels...)
-	}
+	selected := p.state.sampleViewerChannels(p.channels, p.maxPerTick)
+	traqLogAPI("viewer poll selected channels=%d candidates=%d max=%d", len(selected), len(p.channels), p.maxPerTick)
+	return selected
+}
 
-	candidates := make([]weightedChannel, 0, len(p.channels))
-	for _, ch := range p.channels {
-		weight := 1 + p.messageWeight[ch.ID]
-		candidates = append(candidates, weightedChannel{channel: ch, weight: weight})
-		if p.messageWeight[ch.ID] < 0.05 {
-			delete(p.messageWeight, ch.ID)
-		} else {
-			p.messageWeight[ch.ID] *= 0.82
-		}
+func selectWeightedChannels(candidates []weightedChannel, maxChannels int) []weightedChannel {
+	if maxChannels <= 0 || len(candidates) == 0 {
+		return nil
 	}
-
-	selected := make([]traqChannel, 0, p.maxPerTick)
-	for len(selected) < p.maxPerTick && len(candidates) > 0 {
+	candidates = normalizeWeightedChannels(candidates)
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) <= maxChannels {
+		return candidates
+	}
+	selected := make([]weightedChannel, 0, maxChannels)
+	for len(selected) < maxChannels && len(candidates) > 0 {
 		total := 0.0
 		for _, c := range candidates {
-			total += c.weight
+			total += c.normalizedWeight
 		}
 		pick := rand.Float64() * total
 		index := 0
 		for i, c := range candidates {
-			pick -= c.weight
+			pick -= c.normalizedWeight
 			if pick <= 0 {
 				index = i
 				break
 			}
 		}
-		selected = append(selected, candidates[index].channel)
+		selected = append(selected, candidates[index])
 		candidates = append(candidates[:index], candidates[index+1:]...)
 	}
 	return selected
 }
 
-func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, poller *viewerPoller) <-chan viewerSnapshotPayload {
+func normalizeWeightedChannels(candidates []weightedChannel) []weightedChannel {
+	total := 0.0
+	for _, candidate := range candidates {
+		if candidate.rawWeight > 0 {
+			total += candidate.rawWeight
+		}
+	}
+	if total <= 0 {
+		return nil
+	}
+	normalized := make([]weightedChannel, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.rawWeight <= 0 {
+			continue
+		}
+		candidate.normalizedWeight = candidate.rawWeight / total
+		normalized = append(normalized, candidate)
+	}
+	return normalized
+}
+
+func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, poller *viewerPoller, hub *eventHub) <-chan viewerSnapshotPayload {
 	out := make(chan viewerSnapshotPayload)
 	go func() {
 		defer close(out)
@@ -99,12 +110,23 @@ func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, 
 		defer ticker.Stop()
 
 		for {
-			snapshot, err := s.fetchViewerSnapshot(ctx, accessToken, poller)
-			if err == nil {
-				select {
-				case out <- snapshot:
-				case <-ctx.Done():
-					return
+			if hub == nil || hub.hasSubscribers() {
+				snapshot, err := s.fetchViewerSnapshot(ctx, accessToken, poller)
+				if err == nil {
+					traqLogOK(
+						"viewer snapshot sampled=%d totalChannels=%d rows=%d summaries=%d",
+						snapshot.SampledChannels,
+						snapshot.TotalChannels,
+						snapshot.Total,
+						len(snapshot.Channels),
+					)
+					select {
+					case out <- snapshot:
+					case <-ctx.Done():
+						return
+					}
+				} else if ctx.Err() == nil {
+					traqLogWarn("viewer snapshot skipped: %v", err)
 				}
 			}
 			select {
@@ -193,6 +215,7 @@ func (s *server) fetchViewerSnapshot(ctx context.Context, accessToken string, po
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i].UpdatedAt.After(rows[j].UpdatedAt)
 	})
+	totalRows := len(rows)
 	if len(summaries) > 12 {
 		summaries = summaries[:12]
 	}
@@ -202,7 +225,7 @@ func (s *server) fetchViewerSnapshot(ctx context.Context, accessToken string, po
 
 	return viewerSnapshotPayload{
 		TS:              time.Now().Unix(),
-		Total:           len(rows),
+		Total:           totalRows,
 		SampledChannels: len(channels),
 		TotalChannels:   len(poller.channels),
 		Channels:        summaries,
@@ -211,6 +234,7 @@ func (s *server) fetchViewerSnapshot(ctx context.Context, accessToken string, po
 }
 
 func (s *server) fetchChannelViewers(ctx context.Context, accessToken string, channelID string) ([]traqViewer, error) {
+	traqLogAPI("GET /api/v3/channels/%s/viewers", channelID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/channels/"+url.PathEscape(channelID)+"/viewers", nil)
 	if err != nil {
 		return nil, err
@@ -219,14 +243,17 @@ func (s *server) fetchChannelViewers(ctx context.Context, accessToken string, ch
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		traqLogError("GET /api/v3/channels/%s/viewers failed: %v", channelID, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound {
+		traqLogWarn("GET /api/v3/channels/%s/viewers -> %s", channelID, resp.Status)
 		return nil, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		traqLogError("GET /api/v3/channels/%s/viewers -> %s", channelID, resp.Status)
 		return nil, fmt.Errorf("channel viewers endpoint returned %s for %s: %s", resp.Status, channelID, strings.TrimSpace(string(body)))
 	}
 
@@ -234,5 +261,6 @@ func (s *server) fetchChannelViewers(ctx context.Context, accessToken string, ch
 	if err := json.Unmarshal(body, &viewers); err != nil {
 		return nil, err
 	}
+	traqLogOK("GET /api/v3/channels/%s/viewers -> %s viewers=%d", channelID, resp.Status, len(viewers))
 	return viewers, nil
 }

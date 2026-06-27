@@ -10,6 +10,7 @@ import (
 )
 
 func (s *server) fetchChannelData(ctx context.Context, accessToken string) (channelData, error) {
+	traqLogAPI("GET /api/v3/channels")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/channels", nil)
 	if err != nil {
 		return channelData{}, err
@@ -18,12 +19,14 @@ func (s *server) fetchChannelData(ctx context.Context, accessToken string) (chan
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		traqLogError("GET /api/v3/channels failed: %v", err)
 		return channelData{}, err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		traqLogError("GET /api/v3/channels -> %s", resp.Status)
 		return channelData{}, fmt.Errorf("channels endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
@@ -36,6 +39,7 @@ func (s *server) fetchChannelData(ctx context.Context, accessToken string) (chan
 	if err != nil {
 		return channelData{}, err
 	}
+	traqLogOK("GET /api/v3/channels -> %s public=%d active=%d", resp.Status, len(list.Public), len(channels))
 	return channelData{
 		Channels:   channels,
 		ChannelIDs: channelIDSet(channels),

@@ -12,6 +12,8 @@ const (
 	sessionCookieName    = "traq_session"
 	maxConcurrentInits   = 10
 	clientEventQueueSize = 64
+	recentMessageIDLimit = 100
+	maxSyncPayloadDeltas = 100
 )
 
 type server struct {
@@ -31,8 +33,14 @@ type server struct {
 	liveHub    *eventHub
 	initTokens chan struct{}
 
-	demoOnce   sync.Once
-	demoCancel func()
+	demoOnce          sync.Once
+	demoCancel        func()
+	liveViewersOnce   sync.Once
+	liveViewersCancel func()
+	demoSyncOnce      sync.Once
+	demoSyncCancel    func()
+	liveSyncOnce      sync.Once
+	liveSyncCancel    func()
 }
 
 type channel struct {
@@ -45,6 +53,8 @@ type channel struct {
 	Score         float64
 	LastSyncScore float64
 	LastSyncTime  time.Time
+	LastDecayTime time.Time
+	LastViewTime  time.Time
 }
 
 type userState struct {
@@ -54,10 +64,12 @@ type userState struct {
 }
 
 type stateManager struct {
-	mu       sync.RWMutex
-	channels map[string]*channel
-	users    map[string]*userState
-	initJSON []byte
+	mu               sync.RWMutex
+	channels         map[string]*channel
+	users            map[string]*userState
+	seenMessageIDs   map[string]struct{}
+	recentMessageIDs []string
+	initJSON         []byte
 }
 
 type initPayload struct {
@@ -84,6 +96,8 @@ type triggerPayload struct {
 	Usr          string `json:"usr,omitempty"`
 	From         string `json:"from,omitempty"`
 	To           string `json:"to,omitempty"`
+	ClearCurrent bool   `json:"-"`
+	MessageID    string `json:"-"`
 	Source       string `json:"-"`
 	SourceDetail string `json:"-"`
 }

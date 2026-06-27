@@ -33,16 +33,6 @@ export function redirectOAuthCallback() {
     return true;
 }
 
-export async function logout() {
-    const response = await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-    });
-    if (!response.ok) {
-        throw new Error(`/api/auth/logout returned ${response.status}`);
-    }
-}
-
 function normalizeUser(payload: JsonObject): AuthUser {
     const id = readString(payload.id) ?? readString(payload.userId) ?? readString(payload.name);
     const displayName =

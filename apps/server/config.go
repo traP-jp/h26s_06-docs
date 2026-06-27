@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -16,6 +15,8 @@ type config struct {
 	oauthClientID         string
 	oauthRedirectURL      string
 	oauthScope            string
+	traqBotAccessToken    string
+	allowedTraqIDs        map[string]bool
 	syncInterval          time.Duration
 	viewerPollInterval    time.Duration
 	viewerChannelsPerTick int
@@ -29,6 +30,8 @@ func loadConfig() config {
 		oauthClientID:         os.Getenv("TRAQ_CLIENT_ID"),
 		oauthRedirectURL:      envString("TRAQ_REDIRECT_URL", "http://localhost:5173/oauth/callback"),
 		oauthScope:            envString("OAUTH_SCOPE", "read"),
+		traqBotAccessToken:    os.Getenv("TRAQ_BOT_ACCESS_TOKEN"),
+		allowedTraqIDs:        envStringSet("ALLOWED_TRAQ_IDS"),
 		syncInterval:          envDuration("SYNC_INTERVAL", 30*time.Second),
 		viewerPollInterval:    envDuration("VIEWER_POLL_INTERVAL", 20*time.Second),
 		viewerChannelsPerTick: envInt("VIEWER_POLL_CHANNELS", 40),
@@ -42,6 +45,24 @@ func envString(key string, fallback string) string {
 	return fallback
 }
 
+func envStringSet(key string) map[string]bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, id := range strings.Split(raw, ",") {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			set[id] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
 func envDuration(key string, fallback time.Duration) time.Duration {
 	raw := os.Getenv(key)
 	if raw == "" {
@@ -49,7 +70,7 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	}
 	value, err := time.ParseDuration(raw)
 	if err != nil || value <= 0 {
-		log.Printf("invalid %s=%q; using %s", key, raw, fallback)
+		traqLogWarn("invalid config %s=%q; using %s", key, raw, fallback)
 		return fallback
 	}
 	return value
@@ -62,7 +83,7 @@ func envInt(key string, fallback int) int {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil || value <= 0 {
-		log.Printf("invalid %s=%q; using %d", key, raw, fallback)
+		traqLogWarn("invalid config %s=%q; using %d", key, raw, fallback)
 		return fallback
 	}
 	return value

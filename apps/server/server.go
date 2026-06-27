@@ -41,6 +41,15 @@ func (s *server) close() {
 	if s.demoCancel != nil {
 		s.demoCancel()
 	}
+	if s.liveViewersCancel != nil {
+		s.liveViewersCancel()
+	}
+	if s.demoSyncCancel != nil {
+		s.demoSyncCancel()
+	}
+	if s.liveSyncCancel != nil {
+		s.liveSyncCancel()
+	}
 	s.demoHub.close()
 	s.liveHub.close()
 }
@@ -53,6 +62,35 @@ func (s *server) startDemoProducer() {
 	})
 }
 
+func (s *server) startDemoSyncProducer() {
+	s.demoSyncOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.demoSyncCancel = cancel
+		go s.runSyncProducer(ctx, s.demoState, s.demoHub)
+	})
+}
+
+func (s *server) startLiveSyncProducer(state *stateManager) {
+	s.liveSyncOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.liveSyncCancel = cancel
+		go s.runSyncProducer(ctx, state, s.liveHub)
+	})
+}
+
+func (s *server) startLiveViewerPolling(channels []traqChannel, state *stateManager) {
+	s.liveViewersOnce.Do(func() {
+		if s.cfg.traqBotAccessToken == "" {
+			traqLogWarn("TRAQ_BOT_ACCESS_TOKEN is empty; viewer polling is disabled")
+			return
+		}
+		traqLogOK("viewer polling started with bot token channels=%d interval=%s", len(channels), s.cfg.viewerPollInterval)
+		ctx, cancel := context.WithCancel(context.Background())
+		s.liveViewersCancel = cancel
+		go s.consumeViewerSnapshots(ctx, s.cfg.traqBotAccessToken, channels, state, s.liveHub)
+	})
+}
+
 func (s *server) ensureLiveChannelData(ctx context.Context, accessToken string) (channelData, error) {
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
@@ -61,7 +99,7 @@ func (s *server) ensureLiveChannelData(ctx context.Context, accessToken string) 
 		return s.liveData, nil
 	}
 
-	data, err := s.fetchChannelData(ctx, accessToken)
+	data, err := s.fetchChannelData(ctx, s.cfg.traqBotAccessToken)
 	if err != nil {
 		return channelData{}, err
 	}

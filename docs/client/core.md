@@ -31,8 +31,9 @@ interface ChannelNode {
   depth: number;         // ルートからの深さ（色や配置の計算に使用）
 
   // 状態（スコア）
-  currentScore: number;   // 現在の盛り上がり度（描画に直結）
+  currentScore: number;   // 現在の盛り上がり度（サーバーと同じ raw な相対値）
   targetScore: number;    // サーバーから同期された目標スコア（Lerp 用）
+  relativeScore: number;  // 描画に使う 0.0~1.0 の相対値
 }
 ```
 
@@ -59,7 +60,7 @@ class ChannelGraph {
     if (index === undefined) return;
 
     // 対象ノードのスコアをスパイクさせる
-    this.nodes[index].currentScore += 50;
+    this.nodes[index].currentScore += 1.0;
 
     // 親への「波紋連鎖タイマー」をイベントキューに登録する
     this.scheduleRippleToParent(this.nodes[index]);
@@ -112,17 +113,17 @@ function updateFrame(deltaTime: number) {
     const node = channelGraph.nodes[i];
 
     // a) 自律減衰（Exponential Decay）
-    // 毎フレーム、スコアを一定割合（例: 2%）減らす
-    node.currentScore *= 0.98;
+    // 時定数約300秒で緩やかに減らす
+    node.currentScore *= Math.exp(-deltaTime / 300);
 
     // b) サーバー値への補間（Lerp）
     // 目標値との差分を少しずつ埋める（例: 差分の10%を近づける）
     node.currentScore += (node.targetScore - node.currentScore) * 0.1;
 
     // 2. バッファ層への書き込み
-    // スコアからスケール（サイズ）や輝度を計算する
-    const scale = calculateScaleFromScore(node.currentScore);
-    const brightness = calculateBrightness(node.currentScore);
+    // 全ノードの最大付近を基準にした relativeScore からスケールや輝度を計算する
+    const scale = calculateScaleFromScore(node.relativeScore);
+    const brightness = calculateBrightness(node.relativeScore);
 
     // バッファの更新（matrixData と colorData を書き換える）
     nodeBuffer.updateInstance(i, scale, brightness);
