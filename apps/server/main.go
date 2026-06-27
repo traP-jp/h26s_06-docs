@@ -22,4 +22,5 @@ func main() {
 	if err := http.ListenAndServe(cfg.addr, logRequests(srv.routes())); err != nil {
 		log.Fatal(err)
 	}
+	log.Println("起動しました")
 }
