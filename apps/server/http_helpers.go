@@ -7,24 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-)
 
-func (s *server) withCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if s.allowedOrigin(origin) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-		}
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
+	"github.com/labstack/echo/v4"
+)
 
 func (s *server) allowedOrigin(origin string) bool {
 	if origin == "" || origin == s.cfg.appOrigin {
@@ -44,6 +29,11 @@ func (s *server) allowedOrigin(origin string) bool {
 
 func isLoopback(host string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func echoHTTPError(c echo.Context, message string, status int) error {
+	http.Error(c.Response().Writer, message, status)
+	return nil
 }
 
 func marshalEvent(name string, value any) sseEvent {

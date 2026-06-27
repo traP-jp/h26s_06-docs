@@ -27,8 +27,8 @@ func main() {
 		log.Fatalf("preload live channel data: %v", err)
 	}
 
-	if err := http.ListenAndServe(cfg.addr, srv.routes()); err != nil {
+	log.Println("起動しました")
+	if err := srv.routes().Start(cfg.addr); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
-	log.Println("起動しました")
 }
