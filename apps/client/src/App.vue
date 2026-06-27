@@ -306,7 +306,7 @@ onMounted(() => {
     void retryAuthentication();
 });
 
-watch(selectedId, newId => {
+watch(selectedId, (newId, oldId) => {
     if (!graph.value) {
         focusId.value = newId;
         return;
@@ -314,14 +314,17 @@ watch(selectedId, newId => {
 
     const changed = graph.value.updateVisibility(newId);
     focusId.value = newId;
+    const isClosingSelection = !newId && Boolean(oldId);
 
     if (changed) {
         const generation = ++layoutGeneration;
-
+        if (isClosingSelection) {
+            audioManager.playClose();
+        }
         calculateChannelLayout(graph.value.nodes).then(positions => {
             if (generation === layoutGeneration) {
                 graph.value?.applyLayout(positions);
-                audioManager.playBloom();
+                if (!isClosingSelection) audioManager.playBloom();
                 if (focusId.value) focusRevision.value += 1;
             }
         });

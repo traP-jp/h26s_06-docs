@@ -2,8 +2,9 @@ import bgmUrl from "./bgm.mp3";
 import bloomUrl from "./bloom.mp3";
 import moveUrl from "./move.mp3";
 import postUrl from "./post.mp3";
+import closeUrl from "./close.mp3";
 
-type SfxName = "post" | "move" | "bloom";
+type SfxName = "post" | "move" | "bloom" | "close";
 type AudioName = "bgm" | SfxName;
 
 type StorageKeys = {
@@ -47,6 +48,7 @@ const AUDIO_VOLUME_MULTIPLIERS = {
     post: 0.5,
     move: 0.1,
     bloom: 2.3,
+    close: 2.3,
 } as const satisfies Record<AudioName, number>;
 
 const VOLUME_FADE_DURATION_MS = 600;
@@ -86,18 +88,21 @@ class AudioManager {
             post: this.createAudioPool(postUrl, 4),
             move: this.createAudioPool(moveUrl, 4),
             bloom: this.createAudioPool(bloomUrl, 4),
+            close: this.createAudioPool(closeUrl, 4),
         };
 
         this.lastPlayedAt = {
             post: 0,
             move: 0,
             bloom: 0,
+            close: 0,
         };
 
         this.cooldownMs = {
             post: 100,
             move: 150,
             bloom: 200,
+            close: 200,
         };
 
         this.maxActiveSfx = {
@@ -105,6 +110,7 @@ class AudioManager {
             post: 3,
             move: 2,
             bloom: 2,
+            close: 2,
         };
 
         this.applyMuted();
@@ -161,7 +167,7 @@ class AudioManager {
     }
 
     getAllAudioElements(): HTMLAudioElement[] {
-        return [this.bgm, ...this.sfxPools.post, ...this.sfxPools.move, ...this.sfxPools.bloom];
+        return [this.bgm, ...this.sfxPools.post, ...this.sfxPools.move, ...this.sfxPools.bloom, ...this.sfxPools.close];
     }
 
     applyMuted(): void {
@@ -386,6 +392,10 @@ class AudioManager {
 
     playBloom(): void {
         this.playSfx("bloom");
+    }
+
+    playClose(): void {
+        this.playSfx("close");
     }
 }
 
