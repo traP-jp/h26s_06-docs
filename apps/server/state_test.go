@@ -124,8 +124,8 @@ func TestStateManagerApplyTriggerSkipsDuplicateMessage(t *testing.T) {
 	state.mu.RLock()
 	score := state.channels["root"].Score
 	state.mu.RUnlock()
-	if score != 46 {
-		t.Fatalf("root score = %v, want 46", score)
+	if score != messageScoreAmount {
+		t.Fatalf("root score = %v, want %v", score, messageScoreAmount)
 	}
 }
 
@@ -165,11 +165,11 @@ func TestViewerPollWeightUsesCurrentScoreAndElapsed(t *testing.T) {
 	if got := viewerPollWeight(0, 0); got != 0 {
 		t.Fatalf("weight = %v, want 0", got)
 	}
-	if got := viewerPollWeight(50, 10); got < 0.509 || got > 0.511 {
-		t.Fatalf("weight = %v, want 0.51", got)
+	if got := viewerPollWeight(messageScoreAmount, 10); got < 0.469 || got > 0.471 {
+		t.Fatalf("weight = %v, want 0.47", got)
 	}
-	if got := viewerPollWeight(100, 100); got != 1.1 {
-		t.Fatalf("weight = %v, want 1.1", got)
+	if got := viewerPollWeight(2*messageScoreAmount, 100); got != 1.02 {
+		t.Fatalf("weight = %v, want 1.02", got)
 	}
 }
 
@@ -258,15 +258,16 @@ func TestStateManagerSyncPayloadDoesNotDoubleDecayUnselectedChannels(t *testing.
 		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
 	}
 
-	oldDecay := time.Now().Add(-24 * time.Second)
+	oldDecay := time.Now().Add(-scoreDecayTimeScale * time.Second)
 	unselectedSync := time.Now().Add(20 * time.Minute)
+	want := 10 * math.Exp(-scoreDecayTimeScale/scoreDecayTimeScale)
 	state.mu.Lock()
 	state.channels["selected"].Score = 10
 	state.channels["selected"].LastSyncScore = 0
 	state.channels["selected"].LastSyncTime = time.Now().Add(-time.Minute)
 	state.channels["selected"].LastDecayTime = oldDecay
 	state.channels["unselected"].Score = 10
-	state.channels["unselected"].LastSyncScore = 10
+	state.channels["unselected"].LastSyncScore = want
 	state.channels["unselected"].LastSyncTime = unselectedSync
 	state.channels["unselected"].LastDecayTime = oldDecay
 	state.mu.Unlock()
@@ -288,7 +289,6 @@ func TestStateManagerSyncPayloadDoesNotDoubleDecayUnselectedChannels(t *testing.
 	if !lastSync.Equal(unselectedSync) {
 		t.Fatal("unselected channel sync time was updated")
 	}
-	want := 10 * math.Exp(-24.0/24.0)
 	if math.Abs(score-want) > 0.1 {
 		t.Fatalf("unselected score = %v, want about %v", score, want)
 	}

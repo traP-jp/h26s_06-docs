@@ -34,7 +34,7 @@ func debugMov(trigger triggerPayload, fromName string, toName string, result str
 	traqLog(
 		color,
 		"mov",
-		"route=%s detail=%q user=%s from=%s fromName=%q to=%s toName=%q result=%s scoreAdded=%.1f reason=%q",
+		"route=%s detail=%q user=%s from=%s fromName=%q to=%s toName=%q result=%s scoreAdded=%.2f reason=%q",
 		source,
 		detail,
 		user,
