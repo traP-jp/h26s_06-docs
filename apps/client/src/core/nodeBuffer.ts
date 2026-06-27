@@ -38,6 +38,7 @@ export class NodeBuffer {
                 (baseScale + heat * 6) *
                 (1 + pulse) *
                 selectedScale *
+                node.emphasis *
                 Number(visible) *
                 node.visibilityAlpha;
 
@@ -45,7 +46,7 @@ export class NodeBuffer {
             const waverY = Math.cos(now * 0.0009 + index * 0.8) * 1.5;
             const waverZ = Math.sin(now * 0.0007 + index * 1.5) * 1.5;
             writeMatrix(this.matrixData, index * MATRIX_SIZE, node, scale, waverX, waverY, waverZ);
-            writeColor(this.colorData, index * COLOR_SIZE, node.color, heat);
+            writeColor(this.colorData, index * COLOR_SIZE, node.color, heat, node.emphasis);
         }
     }
 }
@@ -77,9 +78,15 @@ function writeMatrix(
     target[offset + 15] = 1;
 }
 
-function writeColor(target: Float32Array, offset: number, hex: string, heat: number) {
+function writeColor(
+    target: Float32Array,
+    offset: number,
+    hex: string,
+    heat: number,
+    emphasis: number
+) {
     const value = Number.parseInt(hex.slice(1), 16);
-    const brightness = 0.9 + Math.min(heat, 0.1);
+    const brightness = (0.9 + Math.min(heat, 0.1)) * emphasis;
     target[offset] = srgbToLinear((value >> 16) / 255) * brightness;
     target[offset + 1] = srgbToLinear(((value >> 8) & 255) / 255) * brightness;
     target[offset + 2] = srgbToLinear((value & 255) / 255) * brightness;
