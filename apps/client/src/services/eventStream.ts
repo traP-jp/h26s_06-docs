@@ -7,6 +7,7 @@ interface EventStreamHandlers {
     onTrigger: (payload: TriggerPayload) => void;
     onSync: (payload: SyncPayload) => void;
     onMalformedEvent?: (eventName: string) => void;
+    onConnectionError?: () => boolean | Promise<boolean>;
 }
 
 export class EventStream {
@@ -64,10 +65,12 @@ export class EventStream {
             const payload = parseEvent<{ error: string }>(event);
             this.handlers.onState("closed", payload?.error ?? "受信エラー");
         });
-        source.onerror = () => {
+        source.onerror = async () => {
             if (this.stopped || source !== this.source) return;
             source.close();
             this.source = undefined;
+            if (await this.handlers.onConnectionError?.()) return;
+            if (this.stopped || this.source) return;
             this.scheduleReconnect();
         };
     }
