@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,13 +44,6 @@ func (s *server) allowedOrigin(origin string) bool {
 
 func isLoopback(host string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
-}
-
-func logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.String())
-		next.ServeHTTP(w, r)
-	})
 }
 
 func marshalEvent(name string, value any) sseEvent {

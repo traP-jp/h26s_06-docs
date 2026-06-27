@@ -2,12 +2,10 @@
 
 package main
 
-import (
-	"fmt"
-	"os"
-)
-
 func debugMov(trigger triggerPayload, fromName string, toName string, result string, reason string, scoreAdded float64) {
+	if trigger.Source == "demo" {
+		return
+	}
 	source := trigger.Source
 	if source == "" {
 		source = "unknown"
@@ -29,9 +27,14 @@ func debugMov(trigger triggerPayload, fromName string, toName string, result str
 		to = "unknown"
 	}
 
-	_, _ = fmt.Fprintf(
-		os.Stdout,
-		"[mov-debug] route=%s detail=%q user=%s from=%s fromName=%q to=%s toName=%q result=%s scoreAdded=%.1f reason=%q\n",
+	color := logColorYellow
+	if result == "applied" {
+		color = logColorGreen
+	}
+	traqLog(
+		color,
+		"mov",
+		"route=%s detail=%q user=%s from=%s fromName=%q to=%s toName=%q result=%s scoreAdded=%.1f reason=%q",
 		source,
 		detail,
 		user,

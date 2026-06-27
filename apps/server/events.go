@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/rand/v2"
 	"net/http"
 	"time"
@@ -186,7 +185,7 @@ func (s *server) consumeTraqStream(ctx context.Context, accessToken string, acti
 			s.publishTrigger(trigger, activeChannelIDs, state, hub)
 		case err, ok := <-errs:
 			if ok && err != nil && ctx.Err() == nil {
-				log.Printf("traQ stream stopped: %v", err)
+				traqLogError("ws stream stopped: %v", err)
 				hub.publish(marshalEvent("stream-error", map[string]string{"error": err.Error()}))
 			}
 			return

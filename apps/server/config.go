@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -51,7 +50,7 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	}
 	value, err := time.ParseDuration(raw)
 	if err != nil || value <= 0 {
-		log.Printf("invalid %s=%q; using %s", key, raw, fallback)
+		traqLogWarn("invalid config %s=%q; using %s", key, raw, fallback)
 		return fallback
 	}
 	return value
@@ -64,7 +63,7 @@ func envInt(key string, fallback int) int {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil || value <= 0 {
-		log.Printf("invalid %s=%q; using %d", key, raw, fallback)
+		traqLogWarn("invalid config %s=%q; using %d", key, raw, fallback)
 		return fallback
 	}
 	return value

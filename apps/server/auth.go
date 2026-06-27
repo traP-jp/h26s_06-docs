@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -55,7 +54,7 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	token, err := s.exchangeAuthorizationCode(r.Context(), code)
 	if err != nil {
-		log.Printf("oauth token exchange failed: %v", err)
+		traqLogError("oauth token exchange failed: %v", err)
 		http.Error(w, "token exchange failed", http.StatusBadGateway)
 		return
 	}

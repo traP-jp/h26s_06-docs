@@ -101,11 +101,20 @@ func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, 
 		for {
 			snapshot, err := s.fetchViewerSnapshot(ctx, accessToken, poller)
 			if err == nil {
+				traqLogOK(
+					"viewer snapshot sampled=%d totalChannels=%d rows=%d summaries=%d",
+					snapshot.SampledChannels,
+					snapshot.TotalChannels,
+					snapshot.Total,
+					len(snapshot.Channels),
+				)
 				select {
 				case out <- snapshot:
 				case <-ctx.Done():
 					return
 				}
+			} else if ctx.Err() == nil {
+				traqLogWarn("viewer snapshot skipped: %v", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -211,6 +220,7 @@ func (s *server) fetchViewerSnapshot(ctx context.Context, accessToken string, po
 }
 
 func (s *server) fetchChannelViewers(ctx context.Context, accessToken string, channelID string) ([]traqViewer, error) {
+	traqLogAPI("GET /api/v3/channels/%s/viewers", channelID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/channels/"+url.PathEscape(channelID)+"/viewers", nil)
 	if err != nil {
 		return nil, err
@@ -219,14 +229,17 @@ func (s *server) fetchChannelViewers(ctx context.Context, accessToken string, ch
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		traqLogError("GET /api/v3/channels/%s/viewers failed: %v", channelID, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound {
+		traqLogWarn("GET /api/v3/channels/%s/viewers -> %s", channelID, resp.Status)
 		return nil, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		traqLogError("GET /api/v3/channels/%s/viewers -> %s", channelID, resp.Status)
 		return nil, fmt.Errorf("channel viewers endpoint returned %s for %s: %s", resp.Status, channelID, strings.TrimSpace(string(body)))
 	}
 
@@ -234,5 +247,6 @@ func (s *server) fetchChannelViewers(ctx context.Context, accessToken string, ch
 	if err := json.Unmarshal(body, &viewers); err != nil {
 		return nil, err
 	}
+	traqLogOK("GET /api/v3/channels/%s/viewers -> %s viewers=%d", channelID, resp.Status, len(viewers))
 	return viewers, nil
 }

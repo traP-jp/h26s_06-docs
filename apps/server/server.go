@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"time"
 )
@@ -60,9 +59,10 @@ func (s *server) startDemoProducer() {
 func (s *server) startLiveViewerPolling(channels []traqChannel) {
 	s.liveViewersOnce.Do(func() {
 		if s.cfg.traqBotAccessToken == "" {
-			log.Printf("TRAQ_BOT_ACCESS_TOKEN is empty; viewer polling is disabled")
+			traqLogWarn("TRAQ_BOT_ACCESS_TOKEN is empty; viewer polling is disabled")
 			return
 		}
+		traqLogOK("viewer polling started with bot token channels=%d interval=%s", len(channels), s.cfg.viewerPollInterval)
 		ctx, cancel := context.WithCancel(context.Background())
 		s.liveViewersCancel = cancel
 		go s.consumeViewerSnapshots(ctx, s.cfg.traqBotAccessToken, channels, s.liveHub)
