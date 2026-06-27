@@ -45,7 +45,11 @@ const emit = defineEmits<{
 
 type GraphNode = ChannelGraph["nodes"][number];
 
+const ACTIVE_NODE_SCORE_THRESHOLD = 0.08;
+const FIT_VISIBILITY_ALPHA = 0.05;
 const KEYBOARD_PAN_SPEED = 420;
+const MAX_ESTIMATED_FOCUS_RADIUS = 220;
+const MIN_FOCUS_RADIUS = 52;
 
 const host = useTemplateRef<HTMLDivElement>("host");
 
@@ -94,6 +98,10 @@ function getNodeBasePosition(node: GraphNode): Vector3 {
     return new Vector3(node.x, node.y, node.z);
 }
 
+function getNodeLayoutPosition(node: GraphNode): Vector3 {
+    return new Vector3(node.targetX, node.targetY, node.targetZ);
+}
+
 function getNodeRenderedPosition(node: GraphNode): Vector3 {
     const matrixArray = nodes?.instanceMatrix.array as Float32Array | undefined;
     const offset = node.index * 16;
@@ -117,6 +125,16 @@ function getFocusedTarget(id: string | undefined = props.focusId): Vector3 {
     }
 
     return getNodeRenderedPosition(node);
+}
+
+function getFocusedLayoutTarget(id: string | undefined = props.focusId): Vector3 {
+    const node = getFocusedNode(id);
+
+    if (!node) {
+        return new Vector3(0, 0, 0);
+    }
+
+    return getNodeLayoutPosition(node);
 }
 
 function getCameraDirection(): Vector3 {
@@ -173,17 +191,78 @@ function collectSubtree(root: GraphNode): GraphNode[] {
 function calculateRadiusAroundTarget(
     target: Vector3,
     nodesToFit: readonly GraphNode[],
+    getPosition: (node: GraphNode) => Vector3 = getNodeRenderedPosition,
 ): number {
     let radius = 30;
 
     for (const node of nodesToFit) {
-        const position = getNodeRenderedPosition(node);
+        const position = getPosition(node);
         const visualPadding = Math.max(24, cameraObstacleRadius(node) * 12);
 
         radius = Math.max(radius, position.distanceTo(target) + visualPadding);
     }
 
     return radius;
+}
+
+function isRenderableInCurrentFilter(node: GraphNode): boolean {
+    return (
+        !props.activeOnly ||
+        node.relativeScore > ACTIVE_NODE_SCORE_THRESHOLD ||
+        node.id === "grand_root" ||
+        node.id === props.selectedId
+    );
+}
+
+function shouldFitNode(node: GraphNode, focusedNode: GraphNode | undefined): boolean {
+    if (node === focusedNode || node.id === props.selectedId || node.id === "grand_root") {
+        return true;
+    }
+
+    return node.isLayoutActive && isRenderableInCurrentFilter(node);
+}
+
+function getNodesToFit(
+    id: string | undefined,
+    focusedNode: GraphNode | undefined,
+): GraphNode[] {
+    const candidates = id && focusedNode ? collectSubtree(focusedNode) : props.graph.nodes;
+    const nodesToFit = candidates.filter(node => shouldFitNode(node, focusedNode));
+
+    if (nodesToFit.length > 0) return nodesToFit;
+    return focusedNode ? [focusedNode] : candidates;
+}
+
+function estimateExpandedRadius(
+    focusedNode: GraphNode | undefined,
+    nodesToFit: readonly GraphNode[],
+): number {
+    if (!focusedNode) return MIN_FOCUS_RADIUS;
+
+    const activeDescendants = nodesToFit.filter(
+        node =>
+            node !== focusedNode &&
+            node.isLayoutActive &&
+            isRenderableInCurrentFilter(node),
+    );
+
+    if (activeDescendants.length === 0) return MIN_FOCUS_RADIUS;
+
+    const directChildCount = activeDescendants.filter(
+        node => node.parentId === focusedNode.id,
+    ).length;
+    const spreadCount = Math.max(1, directChildCount || activeDescendants.length);
+    const maxDepthDelta = activeDescendants.reduce(
+        (max, node) => Math.max(max, Math.max(0, node.depth - focusedNode.depth)),
+        0,
+    );
+    const childSpread = 54 + Math.sqrt(spreadCount) * 18;
+    const depthSpread = MIN_FOCUS_RADIUS + maxDepthDelta * 32;
+
+    return Math.min(
+        MAX_ESTIMATED_FOCUS_RADIUS,
+        Math.max(MIN_FOCUS_RADIUS, childSpread, depthSpread),
+    );
 }
 
 function getFitDistance(radius: number, padding = 1.25): number {
@@ -205,8 +284,14 @@ function getCameraDistanceForTarget(
     id: string | undefined = props.focusId,
 ): number {
     const focusedNode = getFocusedNode(id);
-    const nodesToFit = id && focusedNode ? collectSubtree(focusedNode) : props.graph.nodes;
-    const radius = calculateRadiusAroundTarget(target, nodesToFit);
+    const nodesToFit = getNodesToFit(id, focusedNode);
+    const layoutTarget = getFocusedLayoutTarget(id);
+    const estimatedRadius = id ? estimateExpandedRadius(focusedNode, nodesToFit) : MIN_FOCUS_RADIUS;
+    const radius = Math.max(
+        calculateRadiusAroundTarget(target, nodesToFit),
+        calculateRadiusAroundTarget(layoutTarget, nodesToFit, getNodeLayoutPosition),
+        estimatedRadius,
+    );
 
     return getFitDistance(radius, id ? 1.35 : 1.3);
 }
@@ -733,11 +818,11 @@ function pickNodeAt(x: number, y: number, bounds: DOMRect) {
     }[] = [];
 
     for (const node of props.graph.nodes) {
-        if (node.visibilityAlpha < 0.05) continue;
+        if (node.visibilityAlpha < FIT_VISIBILITY_ALPHA) continue;
 
         if (
             props.activeOnly &&
-            node.relativeScore <= 0.08 &&
+            node.relativeScore <= ACTIVE_NODE_SCORE_THRESHOLD &&
             node.id !== "grand_root" &&
             node.id !== props.selectedId
         ) {

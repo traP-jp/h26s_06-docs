@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { audioManager } from "./audio/audioManager.ts";
 import GalaxyCanvas from "./components/GalaxyCanvas.vue";
@@ -311,16 +311,20 @@ watch(selectedId, newId => {
         return;
     }
 
+    const targetGraph = graph.value;
     const shouldPlayBloom = Boolean(newId && graph.value.get(newId)?.children.length);
-    const changed = graph.value.updateVisibility(newId);
+    const changed = targetGraph.updateVisibility(newId);
     focusId.value = newId;
 
     if (changed) {
         const generation = ++layoutGeneration;
 
-        calculateChannelLayout(graph.value.nodes).then(positions => {
-            if (generation === layoutGeneration) {
-                graph.value?.applyLayout(positions);
+        void nextTick().then(() => calculateChannelLayout(targetGraph.nodes)).then(positions => {
+            if (generation === layoutGeneration && graph.value === targetGraph) {
+                targetGraph.applyLayout(positions);
+                if (selectedId.value === newId) {
+                    cameraResetKey.value += 1;
+                }
                 if (shouldPlayBloom) audioManager.playBloom();
             }
         });
