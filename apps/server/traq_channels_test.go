@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestActiveTraqChannelsSkipsArchivedAncestors(t *testing.T) {
 	archivedParent := "archived-parent"
@@ -38,5 +44,50 @@ func TestTriggerInActiveChannels(t *testing.T) {
 				t.Fatalf("triggerInActiveChannels() = %t, want %t", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEnsureLiveChannelDataUsesBotTokenWhenConfigured(t *testing.T) {
+	var gotAuth string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/channels" {
+			t.Fatalf("path = %q, want /api/v3/channels", r.URL.Path)
+		}
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewEncoder(w).Encode(traqChannelList{Public: []traqChannel{{ID: "root", Name: "root"}}})
+	}))
+	defer api.Close()
+
+	srv, err := newServer(config{traqBaseURL: api.URL, traqBotAccessToken: "bot-token"})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+
+	if _, err := srv.ensureLiveChannelData(context.Background(), "user-token"); err != nil {
+		t.Fatalf("ensureLiveChannelData returned error: %v", err)
+	}
+	if gotAuth != "Bearer bot-token" {
+		t.Fatalf("Authorization = %q, want Bearer bot-token", gotAuth)
+	}
+}
+
+func TestEnsureLiveChannelDataRequiresBotToken(t *testing.T) {
+	var gotAuth string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewEncoder(w).Encode(traqChannelList{Public: []traqChannel{{ID: "root", Name: "root"}}})
+	}))
+	defer api.Close()
+
+	srv, err := newServer(config{traqBaseURL: api.URL, traqBotAccessToken: "bot-token"})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+
+	if _, err := srv.ensureLiveChannelData(context.Background(), "user-token"); err != nil {
+		t.Fatalf("ensureLiveChannelData returned error: %v", err)
+	}
+	if gotAuth != "Bearer bot-token" {
+		t.Fatalf("Authorization = %q, want Bearer bot-token", gotAuth)
 	}
 }

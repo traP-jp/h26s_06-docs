@@ -93,7 +93,7 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 			return nil, nil
 		}
 		traqLogWS("MESSAGE_CREATED messageID=%s", body.ID)
-		channelID, isBot, err := s.fetchMessageInfo(ctx, accessToken, body.ID)
+		channelID, isBot, err := s.fetchMessageInfo(ctx, s.cfg.traqBotAccessToken, body.ID)
 		if err != nil || isBot || channelID == "" {
 			if err == nil && isBot {
 				traqLogWarn("MESSAGE_CREATED skipped: bot messageID=%s channelID=%s", body.ID, channelID)

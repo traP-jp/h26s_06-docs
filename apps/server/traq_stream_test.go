@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -93,4 +95,36 @@ func mustMarshalEvent(t *testing.T, value any) []byte {
 		t.Fatalf("json.Marshal returned error: %v", err)
 	}
 	return data
+}
+
+func TestParseTraqEventMessageUsesBotTokenForMessageAPI(t *testing.T) {
+	var gotAuth string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/messages/message-a" {
+			t.Fatalf("path = %q, want /api/v3/messages/message-a", r.URL.Path)
+		}
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewEncoder(w).Encode(traqMessage{ChannelID: "channel-a"})
+	}))
+	defer api.Close()
+
+	srv, err := newServer(config{traqBaseURL: api.URL, traqBotAccessToken: "bot-token"})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	payload := mustMarshalEvent(t, wsEvent{
+		Type: "MESSAGE_CREATED",
+		Body: mustMarshalRaw(t, wsMessageCreatedBody{ID: "message-a"}),
+	})
+
+	triggers, err := srv.parseTraqEvent(context.Background(), "user-token", payload)
+	if err != nil {
+		t.Fatalf("parseTraqEvent returned error: %v", err)
+	}
+	if len(triggers) != 1 {
+		t.Fatalf("triggers = %d, want 1", len(triggers))
+	}
+	if gotAuth != "Bearer bot-token" {
+		t.Fatalf("Authorization = %q, want Bearer bot-token", gotAuth)
+	}
 }

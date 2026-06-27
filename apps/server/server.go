@@ -99,7 +99,7 @@ func (s *server) ensureLiveChannelData(ctx context.Context, accessToken string) 
 		return s.liveData, nil
 	}
 
-	data, err := s.fetchChannelData(ctx, accessToken)
+	data, err := s.fetchChannelData(ctx, s.cfg.traqBotAccessToken)
 	if err != nil {
 		return channelData{}, err
 	}

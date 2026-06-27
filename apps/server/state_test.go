@@ -296,7 +296,7 @@ func TestStateManagerSyncPayloadDoesNotDoubleDecayUnselectedChannels(t *testing.
 
 func TestEnsureLiveChannelDataKeepsDemoAndLiveStateSeparate(t *testing.T) {
 	hits := 0
-	srv, err := newServer(config{traqBaseURL: "https://example.test"})
+	srv, err := newServer(config{traqBaseURL: "https://example.test", traqBotAccessToken: "bot-token"})
 	if err != nil {
 		t.Fatalf("newServer returned error: %v", err)
 	}
