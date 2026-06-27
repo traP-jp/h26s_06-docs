@@ -15,6 +15,13 @@ interface SelectedChannel {
 interface KeyboardManagerOptions {
     selected: Readonly<Ref<SelectedChannel | undefined>>;
     selectedId: Ref<string | undefined>;
+
+    muted?: Ref<boolean>;
+    settingsOpen?: Ref<boolean>;
+
+    onMuteToggle?: () => void;
+    onSettingsClose?: () => void;
+    onSettingsToggle?: () => void;
 }
 
 const ARROW_TO_TARGET = {
@@ -26,9 +33,44 @@ const ARROW_TO_TARGET = {
 
 type ArrowKey = keyof typeof ARROW_TO_TARGET;
 
-export function useKeyboardManager({ selected, selectedId }: KeyboardManagerOptions): void {
+export function useKeyboardManager({
+    selected,
+    selectedId,
+    muted,
+    settingsOpen,
+    onMuteToggle,
+    onSettingsClose,
+    onSettingsToggle,
+}: KeyboardManagerOptions): void {
     function handleKeyDown(event: KeyboardEvent): void {
+        if (event.key === "Escape") {
+            event.preventDefault();
+
+            if (onSettingsToggle) {
+                onSettingsToggle();
+            } else if (settingsOpen) {
+                settingsOpen.value = !settingsOpen.value;
+            } else if (onSettingsClose) {
+                onSettingsClose();
+            }
+
+            return;
+        }
+
         if (isEditableEventTarget(event.target)) return;
+
+        if (isMuteKey(event)) {
+            event.preventDefault();
+
+            if (onMuteToggle) {
+                onMuteToggle();
+            } else if (muted) {
+                muted.value = !muted.value;
+            }
+
+            return;
+        }
+
         if (!isArrowKey(event.key)) return;
 
         const targetKey = ARROW_TO_TARGET[event.key];
@@ -51,6 +93,16 @@ export function useKeyboardManager({ selected, selectedId }: KeyboardManagerOpti
 
 function isArrowKey(key: string): key is ArrowKey {
     return key in ARROW_TO_TARGET;
+}
+
+function isMuteKey(event: KeyboardEvent): boolean {
+    return (
+        event.key.toLowerCase() === "m" &&
+        !event.repeat &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+    );
 }
 
 function isEditableEventTarget(target: EventTarget | null): boolean {
