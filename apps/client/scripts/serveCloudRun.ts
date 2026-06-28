@@ -20,6 +20,8 @@ const contentTypes = new Map([
     [".wasm", "application/wasm"],
 ]);
 
+type StaticHeaders = Record<string, string>;
+
 Bun.serve({
     port,
     async fetch(request) {
@@ -103,7 +105,7 @@ function resolveStaticPath(pathname: string): string {
     return filePath;
 }
 
-function fileHeaders(filePath: string): HeadersInit {
+function fileHeaders(filePath: string): StaticHeaders {
     const contentType = contentTypes.get(extname(filePath));
 
     return contentType === undefined ? {} : { "content-type": contentType };
