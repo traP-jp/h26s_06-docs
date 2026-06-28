@@ -318,10 +318,7 @@ func (me traqMe) userID() string {
 }
 
 func (me traqMe) traqName() string {
-	if me.Name != "" {
-		return me.Name
-	}
-	return me.userID()
+	return me.Name
 }
 
 func (session authSession) cachedTraqMe() (traqMe, bool) {
