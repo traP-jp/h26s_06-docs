@@ -548,8 +548,8 @@ function spawnShootingStar(now: number, clusterIndex: number, clusterCount: numb
     shootingStarUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
 
     const clusterOffset = (clusterIndex - (clusterCount - 1) / 2) * clusterSpread;
-    const x = (Math.random() * 1.3 - 0.65) * viewportWidth + clusterOffset * 0.35;
-    const y = (0.12 + Math.random() * 0.82) * viewportHeight + clusterOffset;
+    const x = (Math.random() * 1.35 - 0.68) * viewportWidth + clusterOffset * 0.35;
+    const y = (Math.random() * 1.24 - 0.62) * viewportHeight + clusterOffset;
     const screenDirectionX = 0.72 + Math.random() * 0.28;
     const screenDirectionY = -(0.3 + Math.random() * 0.28);
     const direction = shootingStarRight
