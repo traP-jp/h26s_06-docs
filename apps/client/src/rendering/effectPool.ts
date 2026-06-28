@@ -14,6 +14,7 @@ import {
     Vector3,
 } from "three";
 
+import { audioManager } from "../audio/audioManager";
 import type { ChannelGraph, ChannelNode, VisualEvent } from "../core/channelGraph";
 
 interface TimedEffect {
@@ -27,6 +28,7 @@ interface RippleEffect extends TimedEffect {
     mesh: Mesh<RingGeometry, MeshBasicMaterial>;
     baseScale: number;
     nodeId?: string;
+    playPostOnStart: boolean;
 }
 
 interface BeamEffect extends TimedEffect {
@@ -38,6 +40,7 @@ interface BeamEffect extends TimedEffect {
 interface PulseEffect extends TimedEffect {
     mesh: Mesh<SphereGeometry, MeshBasicMaterial>;
     pathIds?: string[];
+    nextRevealIndex: number;
 }
 
 const RIPPLE_COUNT = 48;
@@ -61,7 +64,8 @@ export class EffectPool {
 
     constructor(
         private readonly scene: Scene,
-        private readonly graph: ChannelGraph
+        private readonly graph: ChannelGraph,
+        private readonly onMessageNodeReached: (id: string) => void
     ) {
         this.ripples = Array.from({ length: RIPPLE_COUNT }, () => createRipple(scene));
         this.beams = Array.from({ length: BEAM_COUNT }, () => createBeam(scene));
@@ -119,12 +123,16 @@ export class EffectPool {
     private playMessage(channelId: string, now: number) {
         const path = this.graph.path(channelId);
         if (path.length === 0) return;
+        audioManager.playMove();
+
         const pulse = acquire(this.pulses);
+        if (pulse.active) this.revealRemainingMessagePath(pulse);
         pulse.active = true;
         pulse.startedAt = now;
         pulse.duration = Math.max(420, path.length * 150);
         pulse.delay = 0;
         pulse.pathIds = path.map(n => n.id);
+        pulse.nextRevealIndex = 0;
         pulse.mesh.material.color.set(path.at(-1)?.color ?? "#ffffff");
         pulse.mesh.visible = true;
 
@@ -136,6 +144,7 @@ export class EffectPool {
             ripple.delay = pulse.duration + index * 115;
             ripple.baseScale = node.depth <= 1 ? 7 : 4.5;
             ripple.nodeId = node.id;
+            ripple.playPostOnStart = index === 0;
             ripple.mesh.position.copy(getNodePosition(node, now));
             ripple.mesh.material.color.set(node.color);
             ripple.mesh.visible = false;
@@ -173,6 +182,10 @@ export class EffectPool {
                 ripple.active = false;
                 ripple.mesh.visible = false;
                 continue;
+            }
+            if (ripple.playPostOnStart) {
+                ripple.playPostOnStart = false;
+                audioManager.playPost();
             }
             if (ripple.nodeId) {
                 const node = this.graph.get(ripple.nodeId);
@@ -226,16 +239,34 @@ export class EffectPool {
             if (!pulse.active) continue;
             const progress = (now - pulse.startedAt - pulse.delay) / pulse.duration;
             if (progress >= 1) {
+                this.revealMessagePathThrough(pulse, 1);
                 pulse.active = false;
                 pulse.mesh.visible = false;
                 continue;
             }
             if (pulse.pathIds) {
+                this.revealMessagePathThrough(pulse, Math.max(0, progress));
                 const points = pulse.pathIds.map(id => getNodePosition(this.graph.get(id), now));
                 setPositionAlongPath(pulse.mesh.position, points, Math.max(0, progress));
             }
             pulse.mesh.material.opacity = Math.sin(Math.max(0, progress) * Math.PI);
         }
+    }
+
+    private revealMessagePathThrough(pulse: PulseEffect, progress: number) {
+        const pathIds = pulse.pathIds;
+        if (!pathIds || pathIds.length === 0) return;
+
+        const reachedIndex = Math.floor(Math.min(1, progress) * (pathIds.length - 1));
+        while (pulse.nextRevealIndex <= reachedIndex) {
+            const id = pathIds[pulse.nextRevealIndex];
+            if (id) this.onMessageNodeReached(id);
+            pulse.nextRevealIndex += 1;
+        }
+    }
+
+    private revealRemainingMessagePath(pulse: PulseEffect) {
+        this.revealMessagePathThrough(pulse, 1);
     }
 }
 
@@ -253,7 +284,15 @@ function createRipple(scene: Scene): RippleEffect {
     );
     mesh.visible = false;
     scene.add(mesh);
-    return { mesh, active: false, startedAt: 0, duration: 0, delay: 0, baseScale: 1 };
+    return {
+        mesh,
+        active: false,
+        startedAt: 0,
+        duration: 0,
+        delay: 0,
+        baseScale: 1,
+        playPostOnStart: false,
+    };
 }
 
 function createBeam(scene: Scene): BeamEffect {
@@ -303,7 +342,7 @@ function createPulse(scene: Scene): PulseEffect {
     );
     mesh.visible = false;
     scene.add(mesh);
-    return { mesh, active: false, startedAt: 0, duration: 0, delay: 0 };
+    return { mesh, active: false, startedAt: 0, duration: 0, delay: 0, nextRevealIndex: 0 };
 }
 
 function acquire<T extends TimedEffect>(pool: T[]) {

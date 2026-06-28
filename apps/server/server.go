@@ -4,7 +4,12 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
+
+const authCleanupInterval = 10 * time.Minute
 
 func newServer(cfg config) (*server, error) {
 	demoState, err := newDemoStateManager()
@@ -16,31 +21,57 @@ func newServer(cfg config) (*server, error) {
 		cfg:          cfg,
 		client:       &http.Client{Timeout: 15 * time.Second},
 		states:       map[string]time.Time{},
-		sessions:     map[string]tokenResponse{},
+		sessions:     map[string]authSession{},
 		userBotCache: map[string]bool{},
 		demoState:    demoState,
 		demoHub:      newEventHub(),
 		liveHub:      newEventHub(),
+		viewerHub:    newViewerSignalHub(),
 		initTokens:   make(chan struct{}, maxConcurrentInits),
 	}, nil
 }
 
-func (s *server) routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/auth/login", s.handleLogin)
-	mux.HandleFunc("/api/auth/callback", s.handleCallback)
-	mux.HandleFunc("/api/auth/logout", s.handleLogout)
-	mux.HandleFunc("/api/events", s.handleEvents)
-	mux.HandleFunc("/api/me", s.handleMe)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+func (s *server) routes() *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+
+	e.Use(middleware.Recover())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOriginFunc: func(origin string) (bool, error) {
+			return s.allowedOrigin(origin), nil
+		},
+		AllowHeaders:     []string{echo.HeaderContentType},
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodOptions},
+		AllowCredentials: true,
+	}))
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if c.Request().Method == http.MethodOptions {
+				return c.NoContent(http.StatusNoContent)
+			}
+			return next(c)
+		}
 	})
-	return s.withCORS(mux)
+
+	methods := []string{http.MethodGet, http.MethodPost}
+	e.Match(methods, "/api/auth/login", s.handleLogin)
+	e.Match(methods, "/api/auth/callback", s.handleCallback)
+	e.Match(methods, "/api/auth/logout", s.handleLogout)
+	e.Match(methods, "/api/events", s.handleEvents)
+	e.Match(methods, "/api/me", s.handleMe)
+	e.PUT("/api/status", s.handleStatus)
+	e.Match(methods, "/healthz", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+	return e
 }
 
 func (s *server) close() {
 	if s.demoCancel != nil {
 		s.demoCancel()
+	}
+	if s.authCleanupCancel != nil {
+		s.authCleanupCancel()
 	}
 	if s.liveViewersCancel != nil {
 		s.liveViewersCancel()
@@ -53,6 +84,25 @@ func (s *server) close() {
 	}
 	s.demoHub.close()
 	s.liveHub.close()
+	s.viewerHub.close()
+}
+
+func (s *server) startAuthCleanup(ctx context.Context) {
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	s.authCleanupCancel = cancel
+
+	go func() {
+		ticker := time.NewTicker(authCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cleanupCtx.Done():
+				return
+			case <-ticker.C:
+				s.cleanupExpiredAuth(time.Now())
+			}
+		}
+	}()
 }
 
 func (s *server) startDemoProducer() {

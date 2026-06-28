@@ -1,7 +1,20 @@
-import { computed, ref, shallowRef } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 
-import type { ChannelGraph } from "../core/channelGraph";
+import type { ChannelGraph, ChannelNode } from "../core/channelGraph";
 import type { ConnectionState, TriggerPayload } from "../types/api";
+
+export interface NavigationTargets {
+    parentId?: string;
+    childId?: string;
+    previousSiblingId?: string;
+    nextSiblingId?: string;
+}
+
+export type SelectedChannel = ChannelNode & {
+    path: string;
+    pathHref: string;
+    navigation: NavigationTargets;
+};
 
 export function useAppState() {
     // ChannelGraph は毎フレーム自身を更新するため、Vue の深い監視から除外する。
@@ -14,16 +27,25 @@ export function useAppState() {
     const lastEvent = ref("初期データを待っています");
     const updatedAt = ref("");
     const renderError = ref<string>();
+    const rememberedChildByParent = ref<Record<string, string>>({});
 
     const selected = computed(() => {
         const channel = selectedId.value ? graph.value?.get(selectedId.value) : undefined;
         if (!channel) return undefined;
+        const pathNodes = graph.value?.path(channel.id) ?? [];
+        const channelPath = pathNodes
+            .filter(node => node.id !== "grand_root")
+            .map(node => node.name)
+            .join(" / ");
         return {
             ...channel,
-            path: graph.value
-                ?.path(channel.id)
-                .map(node => node.name)
-                .join(" / "),
+            path: `# ${channelPath}`,
+            pathHref: `https://q.trap.jp/channels/${channelPath.replaceAll(" / ", "/")}`,
+            navigation:
+                graph.value?.navigationTargets(
+                    channel.id,
+                    rememberedChildByParent.value[channel.id]
+                ) ?? {},
         };
     });
 
@@ -47,10 +69,22 @@ export function useAppState() {
     function resetActivity() {
         graph.value = undefined;
         selectedId.value = undefined;
+        rememberedChildByParent.value = {};
         eventCount.value = 0;
         lastEvent.value = "初期データを待っています";
         updatedAt.value = "";
     }
+
+    watch(selectedId, id => {
+        const node = id ? graph.value?.get(id) : undefined;
+        if (!node?.parentId) return;
+
+        if (rememberedChildByParent.value[node.parentId] === node.id) return;
+        rememberedChildByParent.value = {
+            ...rememberedChildByParent.value,
+            [node.parentId]: node.id,
+        };
+    });
 
     return {
         graph,

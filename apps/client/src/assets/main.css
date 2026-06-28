@@ -62,22 +62,22 @@ button {
     padding: 16px 20px;
 }
 
-.topbar > div {
+.topbar__brand {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
+}
+
+.topbar__title {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .topbar-logo {
-    height: 32px;
+    height: 42px;
     width: auto;
     flex-shrink: 0;
-}
-
-.topbar__meta {
-    display: flex;
-    align-items: center;
-    gap: 16px;
 }
 
 .eyebrow {
@@ -308,8 +308,14 @@ dd {
 .details__path {
     margin: 8px 0 0;
     color: #7187a4;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.6;
+    text-decoration: none;
+}
+
+.details__path:hover {
+    color: #adcae6;
+    text-decoration: underline;
 }
 
 .details dl {
@@ -458,17 +464,12 @@ dd {
         gap: 12px;
     }
 
-    .topbar__meta {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
     h1 {
         font-size: 17px;
     }
 
-    .session-pill {
-        justify-content: space-between;
+    .topbar-logo {
+        height: 38px;
     }
 
     .metrics {
@@ -675,6 +676,31 @@ dd {
 .settingsToggle:focus-within {
     outline: 1px solid #75caff;
     outline-offset: 2px;
+}
+
+.settingsStatus {
+    display: grid;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid rgb(140 190 255 / 12%);
+}
+
+.settingsStatus .connection,
+.settingsStatus .session-pill {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.settingsStatus .connection {
+    min-width: 0;
+    border: 1px solid rgb(140 190 255 / 13%);
+    padding: 10px;
+    background: rgb(5 12 25 / 72%);
+}
+
+.settingsStatus .connection small {
+    max-width: 260px;
 }
 
 .volumeControl {

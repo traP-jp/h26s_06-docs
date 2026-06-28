@@ -1,65 +1,100 @@
 import { describe, expect, test } from "bun:test";
 
-import { calculateFramedCameraDistance } from "../src/core/cameraFraming";
+import { calculateCameraFrame } from "../src/core/cameraFraming";
 
-describe("calculateFramedCameraDistance", () => {
-    test("keeps the existing distance when every point already fits", () => {
-        const distance = calculateFramedCameraDistance(
-            { x: 0, y: 0, z: 0 },
+describe("calculateCameraFrame", () => {
+    test("centers the target on the expanded nodes", () => {
+        const frame = calculateCameraFrame(
             [
-                {
-                    position: { x: 8, y: 5, z: 0 },
-                    radius: 4,
-                },
+                { x: 20, y: -40, z: 0 },
+                { x: 180, y: 80, z: 0 },
             ],
-            {
-                cameraDirection: { x: 0, y: 0, z: 1 },
-                verticalFovDegrees: 52,
-                aspect: 16 / 9,
-                minimumDistance: 120,
-            }
+            { x: 0, y: 0, z: 1 },
+            52,
+            16 / 9
         );
 
-        expect(distance).toBe(120);
+        expect(frame.target.x).toBeCloseTo(100);
+        expect(frame.target.y).toBeCloseTo(20);
+        expect(frame.target.z).toBeCloseTo(0);
     });
 
-    test("increases distance when a focused node group would sit outside the viewport", () => {
-        const distance = calculateFramedCameraDistance(
-            { x: 0, y: 0, z: 0 },
-            [
-                {
-                    position: { x: 130, y: 0, z: 0 },
-                    radius: 12,
-                },
-            ],
-            {
-                cameraDirection: { x: 0, y: 0, z: 1 },
-                verticalFovDegrees: 52,
-                aspect: 1,
-                minimumDistance: 80,
-            }
-        );
+    test("uses the horizontal field of view on a narrow viewport", () => {
+        const points = [
+            { x: -100, y: 0, z: 0 },
+            { x: 100, y: 0, z: 0 },
+        ];
+        const wide = calculateCameraFrame(points, { x: 0, y: 0, z: 1 }, 52, 2);
+        const narrow = calculateCameraFrame(points, { x: 0, y: 0, z: 1 }, 52, 0.5);
 
-        expect(distance).toBeGreaterThan(300);
+        expect(narrow.distance).toBeGreaterThan(wide.distance * 2);
     });
 
-    test("accounts for points closer to the camera along the view direction", () => {
-        const distance = calculateFramedCameraDistance(
-            { x: 0, y: 0, z: 0 },
+    test("accounts for nodes closer to the camera", () => {
+        const flat = calculateCameraFrame(
             [
-                {
-                    position: { x: 0, y: 42, z: 75 },
-                    radius: 8,
-                },
+                { x: -80, y: 0, z: 0 },
+                { x: 80, y: 0, z: 0 },
             ],
-            {
-                cameraDirection: { x: 0, y: 0, z: 1 },
-                verticalFovDegrees: 52,
-                aspect: 16 / 9,
-                minimumDistance: 80,
-            }
+            { x: 0, y: 0, z: 1 },
+            52,
+            1
+        );
+        const deep = calculateCameraFrame(
+            [
+                { x: -80, y: 0, z: 80 },
+                { x: 80, y: 0, z: -80 },
+            ],
+            { x: 0, y: 0, z: 1 },
+            52,
+            1
         );
 
-        expect(distance).toBeGreaterThan(175);
+        expect(deep.distance).toBeGreaterThan(flat.distance);
+    });
+
+    test("does not pull back for a large number of tightly grouped nodes", () => {
+        const sparse = calculateCameraFrame([{ x: 0, y: 0, z: 0 }], { x: 0, y: 0, z: 1 }, 52, 1);
+        const dense = calculateCameraFrame(
+            Array.from({ length: 100 }, () => ({ x: 0, y: 0, z: 0 })),
+            { x: 0, y: 0, z: 1 },
+            52,
+            1
+        );
+
+        expect(dense.distance).toBe(sparse.distance);
+    });
+
+    test("uses the selected node as the camera target while fitting its children", () => {
+        const target = { x: 20, y: -10, z: 5 };
+        const frame = calculateCameraFrame(
+            [target, { x: 180, y: 80, z: 0 }],
+            { x: 0, y: 0, z: 1 },
+            52,
+            16 / 9,
+            target
+        );
+
+        expect(frame.target).toEqual(target);
+        expect(frame.distance).toBeGreaterThan(160);
+    });
+
+    test("accounts for node radius when fitting a focused group", () => {
+        const compact = calculateCameraFrame(
+            [{ x: 120, y: 0, z: 0, radius: 0 }],
+            { x: 0, y: 0, z: 1 },
+            52,
+            1,
+            { x: 0, y: 0, z: 0 }
+        );
+        const expanded = calculateCameraFrame(
+            [{ x: 120, y: 0, z: 0, radius: 24 }],
+            { x: 0, y: 0, z: 1 },
+            52,
+            1,
+            { x: 0, y: 0, z: 0 }
+        );
+
+        expect(expanded.distance).toBeGreaterThan(compact.distance);
     });
 });

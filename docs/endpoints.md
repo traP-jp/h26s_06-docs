@@ -11,14 +11,14 @@
 
 ### 3.1 `init` イベント (初期化データ)
 
-新規クライアント接続時に一度だけ送信される、全チャンネルの構造データ。
+新規クライアント接続時に一度だけ送信される、全チャンネルの構造データ。各チャンネルの `score` は小数第3位に丸めて配信する。
 
 ```json
 event: init
 data: {
   "channels": {
     "grand_root": { "id": "grand_root", "parentId": "", "children": ["root_ch_1", "root_ch_2"] },
-    "root_ch_1": { "id": "root_ch_1", "parentId": "grand_root", "children": ["sub_ch_10"] }
+    "root_ch_1": { "id": "root_ch_1", "parentId": "grand_root", "children": ["sub_ch_10"], "score": 1.234 }
   }
 }
 
@@ -32,7 +32,7 @@ data: {
 
 ```json
 event: trigger
-data: {"type": "msg", "ch": "sub_ch_10"}
+data: {"type": "msg", "ch": "sub_ch_10", "delta": 2.398}
 
 ```
 
@@ -40,21 +40,23 @@ data: {"type": "msg", "ch": "sub_ch_10"}
 
 ```json
 event: trigger
-data: {"type": "mov", "usr": "user_hash_123", "from": "sub_ch_10", "to": "sub_ch_11"}
+data: {"type": "mov", "usr": "user_hash_123", "from": "sub_ch_10", "to": "sub_ch_11", "delta": 0.25}
 
 ```
 
+`delta` は対象チャンネル（深さ0）に加算されるスコアの増加量。投稿時は `messageScoreAmount * log(1 + 文字数)`、移動時は固定値を用いる。祖先チャンネルへの伝播は `ancestorScoreFactor` の累乗で減衰する。
+
 ### 3.3 `sync` イベント (定期同期)
 
-30秒ごとにバックエンドで計算している相対的な「盛り上がり度」を配信し、フロントエンドの自律減衰によるズレを補正する。値は固定上限を持たない raw score で、フロントエンド側で表示用の相対値に正規化する。 ./server/specs.md に記載のアルゴリズムに基づいて抽出された差分のみを送信する。
+30秒ごとにバックエンドで計算している相対的な「盛り上がり度」を配信し、フロントエンドの自律減衰によるズレを補正する。値は固定上限を持たない raw score で、小数第3位に丸めて配信し、フロントエンド側で表示用の相対値に正規化する。 ./server/specs.md に記載のアルゴリズムに基づいて抽出された差分のみを送信する。
 
 ```json
 event: sync
 data: {
   "ts": 1719300000,
   "deltas": {
-    "sub_ch_10": 1.7,
-    "root_ch_1": 0.8
+    "sub_ch_10": 1.734,
+    "root_ch_1": 0.812
   }
 }
 

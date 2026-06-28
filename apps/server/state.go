@@ -5,24 +5,82 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"sync"
 	"time"
 )
 
 const (
-	messageScoreAmount   = 1.0
-	movementScoreAmount  = 0.25
-	ancestorScoreFactor  = 0.45
-	scoreDecayTimeScale  = 300.0
-	syncDeltaWeightScale = 10.0
-	viewerScoreWeight    = 0.46
+	grandRootID          = "grand_root"
+	recentMessageIDLimit = 100
+	maxSyncPayloadDeltas = 100
+
+  messageScoreAmount         = 1.0
+  messageScoreReferenceChars = 20
+  movementScoreAmount        = 0.025
+  ancestorScoreFactor        = 0.45
+  scoreDecayTimeScale        = 300.0
+  messageCountTimeScale      = 300.0
+  minMessageCount            = 0.01
+  syncDeltaWeightScale       = 10.0
+  viewerScoreWeight          = 0.46
 )
+
+type channel struct {
+	ID            string
+	Name          string
+	ParentID      string
+	Children      []string
+	IslandID      int
+	Depth         int
+	Score         float64
+	LastSyncScore float64
+	LastSyncTime  time.Time
+	LastDecayTime time.Time
+	LastViewTime  time.Time
+}
+
+type userState struct {
+	UserID            string
+	CurrentChannel    string
+	LastViewedChannel string
+	LastUpdated       time.Time
+}
+
+type messageCount struct {
+	Count       float64
+	LastUpdated time.Time
+}
+
+type stateManager struct {
+	mu               sync.RWMutex
+	channels         map[string]*channel
+	users            map[string]*userState
+	messageCounts    map[string]map[string]messageCount
+	seenMessageIDs   map[string]struct{}
+	recentMessageIDs []string
+	initJSON         []byte
+}
+
+type initPayload struct {
+	Channels map[string]initChannel `json:"channels"`
+}
+
+type initChannel struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	ParentID string   `json:"parentId"`
+	Children []string `json:"children"`
+	IslandID int      `json:"islandId"`
+	Depth    int      `json:"depth"`
+	Score    float64  `json:"score"`
+}
 
 func newDemoStateManager() (*stateManager, error) {
 	now := time.Now()
 	channels := map[string]*channel{
 		grandRootID: {
 			ID:           grandRootID,
-			Name:         "Grand Root",
+			Name:         "traQ",
 			ParentID:     "",
 			IslandID:     -1,
 			Depth:        0,
@@ -69,7 +127,12 @@ func newDemoStateManager() (*stateManager, error) {
 	}
 
 	prepareChannelTimes(channels, now)
-	sm := &stateManager{channels: channels, users: map[string]*userState{}, seenMessageIDs: map[string]struct{}{}}
+	sm := &stateManager{
+		channels:       channels,
+		users:          map[string]*userState{},
+		messageCounts:  map[string]map[string]messageCount{},
+		seenMessageIDs: map[string]struct{}{},
+	}
 	if err := sm.rebuildInitJSONLocked(); err != nil {
 		return nil, err
 	}
@@ -81,7 +144,7 @@ func newStateManagerFromTraq(channels []traqChannel) (*stateManager, error) {
 	nodes := map[string]*channel{
 		grandRootID: {
 			ID:           grandRootID,
-			Name:         "Grand Root",
+			Name:         "traQ",
 			ParentID:     "",
 			IslandID:     -1,
 			Depth:        0,
@@ -128,7 +191,12 @@ func newStateManagerFromTraq(channels []traqChannel) (*stateManager, error) {
 	}
 
 	prepareChannelTimes(nodes, now)
-	sm := &stateManager{channels: nodes, users: map[string]*userState{}, seenMessageIDs: map[string]struct{}{}}
+	sm := &stateManager{
+		channels:       nodes,
+		users:          map[string]*userState{},
+		messageCounts:  map[string]map[string]messageCount{},
+		seenMessageIDs: map[string]struct{}{},
+	}
 	if err := sm.rebuildInitJSONLocked(); err != nil {
 		return nil, err
 	}
@@ -159,9 +227,63 @@ func prepareChannelTimes(channels map[string]*channel, now time.Time) {
 }
 
 func (sm *stateManager) initPayloadBytes() []byte {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	now := time.Now()
+	sm.decayScoresLocked(now)
+	sm.decayMessageCountsLocked(now)
+	data, err := sm.marshalInitPayloadLocked()
+	if err != nil {
+		return append([]byte(nil), sm.initJSON...)
+	}
+	sm.initJSON = data
+	return append([]byte(nil), data...)
+}
+
+func (sm *stateManager) setUserStatus(userID string, channelID string) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if userID == "" || channelID == "" || sm.channels[channelID] == nil {
+		return false
+	}
+	user := sm.users[userID]
+	if user == nil {
+		user = &userState{UserID: userID}
+		sm.users[userID] = user
+	}
+	user.CurrentChannel = channelID
+	user.LastViewedChannel = channelID
+	user.LastUpdated = time.Now()
+	return true
+}
+
+func (sm *stateManager) clearUserStatus(userID string) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if userID == "" {
+		return false
+	}
+	user := sm.users[userID]
+	if user == nil {
+		return false
+	}
+	user.CurrentChannel = ""
+	user.LastUpdated = time.Now()
+	return true
+}
+
+func (sm *stateManager) currentChannel(userID string) string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return append([]byte(nil), sm.initJSON...)
+
+	user := sm.users[userID]
+	if user == nil {
+		return ""
+	}
+	return user.CurrentChannel
 }
 
 func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bool) {
@@ -179,7 +301,9 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 			}
 			sm.rememberMessageIDLocked(trigger.MessageID)
 		}
-		sm.addScoreLocked(trigger.Ch, messageScoreAmount)
+		score := sm.messageScoreDeltaLocked(trigger, time.Now())
+		sm.addScoreLocked(trigger.Ch, score)
+		trigger.ScoreDelta = score
 		return trigger, true
 	case "mov":
 		if trigger.ClearCurrent {
@@ -208,12 +332,16 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 			}
 			if trigger.From == "" {
 				trigger.From = user.CurrentChannel
+				if trigger.From == "" {
+					trigger.From = user.LastViewedChannel
+				}
 			}
-			if trigger.From == trigger.To {
+			if trigger.From == trigger.To || user.LastViewedChannel == trigger.To {
 				debugMov(trigger, toName, toName, "skipped", "user is already in the destination channel", 0)
 				return trigger, false
 			}
 			user.CurrentChannel = trigger.To
+			user.LastViewedChannel = trigger.To
 			user.LastUpdated = time.Now()
 		}
 		if from := sm.channels[trigger.From]; from != nil {
@@ -221,11 +349,77 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 		}
 		score := movementScoreAmount
 		sm.addScoreLocked(trigger.To, score)
+		trigger.ScoreDelta = score
 		debugMov(trigger, fromName, toName, "applied", "user moved to a different channel; destination channel and ancestors receive movement score", score)
 		return trigger, true
 	default:
 		return trigger, false
 	}
+}
+
+func messageScoreDelta(trigger triggerPayload) float64 {
+	if !trigger.HasMessageLength {
+		return messageScoreAmount
+	}
+	if trigger.MessageLength <= 0 {
+		return 0
+	}
+	return messageScoreAmount *
+		math.Log1p(float64(trigger.MessageLength)) /
+		math.Log1p(float64(messageScoreReferenceChars))
+}
+
+func (sm *stateManager) messageScoreDeltaLocked(trigger triggerPayload, now time.Time) float64 {
+	base := messageScoreDelta(trigger)
+	if trigger.Ch == "" || trigger.MessageUserID == "" {
+		return base
+	}
+	count := sm.decayedMessageCountLocked(trigger.Ch, trigger.MessageUserID, now)
+	sm.storeMessageCountLocked(trigger.Ch, trigger.MessageUserID, count+1, now)
+	return base / (1 + count)
+}
+
+func (sm *stateManager) decayedMessageCountLocked(channelID string, userID string, now time.Time) float64 {
+	if sm.messageCounts == nil {
+		return 0
+	}
+	channelCounts := sm.messageCounts[channelID]
+	if channelCounts == nil {
+		return 0
+	}
+	entry, ok := channelCounts[userID]
+	if !ok {
+		return 0
+	}
+	count := decayedMessageCount(entry, now)
+	if count < minMessageCount {
+		delete(channelCounts, userID)
+		if len(channelCounts) == 0 {
+			delete(sm.messageCounts, channelID)
+		}
+		return 0
+	}
+	return count
+}
+
+func (sm *stateManager) storeMessageCountLocked(channelID string, userID string, count float64, now time.Time) {
+	if sm.messageCounts == nil {
+		sm.messageCounts = map[string]map[string]messageCount{}
+	}
+	channelCounts := sm.messageCounts[channelID]
+	if channelCounts == nil {
+		channelCounts = map[string]messageCount{}
+		sm.messageCounts[channelID] = channelCounts
+	}
+	channelCounts[userID] = messageCount{Count: count, LastUpdated: now}
+}
+
+func decayedMessageCount(entry messageCount, now time.Time) float64 {
+	elapsed := now.Sub(entry.LastUpdated).Seconds()
+	if elapsed <= 0 {
+		return entry.Count
+	}
+	return entry.Count * math.Exp(-elapsed/messageCountTimeScale)
 }
 
 func (sm *stateManager) rememberMessageIDLocked(messageID string) {
@@ -256,14 +450,11 @@ func (sm *stateManager) syncPayload() syncPayload {
 	defer sm.mu.Unlock()
 
 	now := time.Now()
+	sm.decayScoresLocked(now)
+	sm.decayMessageCountsLocked(now)
+
 	weighted := make([]weightedChannel, 0, len(sm.channels))
 	for _, ch := range sm.channels {
-		decayElapsed := now.Sub(ch.LastDecayTime).Seconds()
-		if decayElapsed > 0 {
-			ch.Score *= math.Exp(-decayElapsed / scoreDecayTimeScale)
-		}
-		ch.LastDecayTime = now
-
 		elapsed := now.Sub(ch.LastSyncTime).Seconds()
 		deltaScore := math.Abs(ch.Score - ch.LastSyncScore)
 		weight := syncPayloadWeight(deltaScore, elapsed)
@@ -276,11 +467,44 @@ func (sm *stateManager) syncPayload() syncPayload {
 		if ch == nil {
 			continue
 		}
-		deltas[ch.ID] = math.Round(ch.Score*10) / 10
+		deltas[ch.ID] = roundedScore(ch.Score)
 		ch.LastSyncScore = ch.Score
 		ch.LastSyncTime = now
 	}
 	return syncPayload{TS: now.Unix(), Deltas: deltas}
+}
+
+func (sm *stateManager) decayScoresLocked(now time.Time) {
+	for _, ch := range sm.channels {
+		decayElapsed := now.Sub(ch.LastDecayTime).Seconds()
+		if decayElapsed > 0 {
+			ch.Score *= math.Exp(-decayElapsed / scoreDecayTimeScale)
+		}
+		ch.LastDecayTime = now
+	}
+}
+
+func (sm *stateManager) decayMessageCountsLocked(now time.Time) {
+	if sm.messageCounts == nil {
+		return
+	}
+	for channelID, channelCounts := range sm.messageCounts {
+		for userID, entry := range channelCounts {
+			count := decayedMessageCount(entry, now)
+			if count < minMessageCount {
+				delete(channelCounts, userID)
+				continue
+			}
+			channelCounts[userID] = messageCount{Count: count, LastUpdated: now}
+		}
+		if len(channelCounts) == 0 {
+			delete(sm.messageCounts, channelID)
+		}
+	}
+}
+
+func roundedScore(score float64) float64 {
+	return math.Round(score*1000) / 1000
 }
 
 func syncPayloadWeight(deltaScore float64, elapsedSeconds float64) float64 {
@@ -342,6 +566,15 @@ func (sm *stateManager) randomLeafID() string {
 }
 
 func (sm *stateManager) rebuildInitJSONLocked() error {
+	data, err := sm.marshalInitPayloadLocked()
+	if err != nil {
+		return err
+	}
+	sm.initJSON = data
+	return nil
+}
+
+func (sm *stateManager) marshalInitPayloadLocked() ([]byte, error) {
 	payload := initPayload{Channels: make(map[string]initChannel, len(sm.channels))}
 	for id, ch := range sm.channels {
 		children := ch.Children
@@ -355,12 +588,8 @@ func (sm *stateManager) rebuildInitJSONLocked() error {
 			Children: children,
 			IslandID: ch.IslandID,
 			Depth:    ch.Depth,
+			Score:    roundedScore(ch.Score),
 		}
 	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	sm.initJSON = data
-	return nil
+	return json.Marshal(payload)
 }

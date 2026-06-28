@@ -15,6 +15,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize server: %v", err)
 	}
+	srv.startAuthCleanup(context.Background())
 	defer srv.close()
 
 	if cfg.oauthClientID == "" {
@@ -26,8 +27,8 @@ func main() {
 		log.Fatalf("preload live channel data: %v", err)
 	}
 
-	if err := http.ListenAndServe(cfg.addr, srv.routes()); err != nil {
+	log.Println("起動しました")
+	if err := srv.routes().Start(cfg.addr); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
-	log.Println("起動しました")
 }

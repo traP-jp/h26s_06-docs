@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -15,6 +14,77 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+const userBotCacheLimit = 1500
+
+type traqMessage struct {
+	ChannelID string `json:"channelId"`
+	UserID    string `json:"userId"`
+	Content   string `json:"content"`
+}
+
+type messageInfo struct {
+	ChannelID string
+	UserID    string
+	IsBot     bool
+	Length    int
+}
+
+type traqUser struct {
+	Bot bool `json:"bot"`
+}
+
+type wsEvent struct {
+	Type string          `json:"type"`
+	Body json.RawMessage `json:"body"`
+}
+
+type wsMessageCreatedBody struct {
+	ID string `json:"id"`
+}
+
+type wsViewStateChangedBody struct {
+	ViewStates []wsViewState `json:"view_states"`
+}
+
+type wsViewState struct {
+	Key            string `json:"key"`
+	ChannelID      string `json:"channelId"`
+	ChannelIDSnake string `json:"channel_id"`
+	State          string `json:"state"`
+}
+
+func (s wsViewState) channelID() string {
+	if s.ChannelID != "" {
+		return s.ChannelID
+	}
+	return s.ChannelIDSnake
+}
+
+type wsChannelViewersChangedBody struct {
+	ID             string `json:"id"`
+	ChannelID      string `json:"channelId"`
+	ChannelIDUpper string `json:"channelID"`
+	ChannelIDSnake string `json:"channel_id"`
+	Channel        struct {
+		ID string `json:"id"`
+	} `json:"channel"`
+}
+
+func (b wsChannelViewersChangedBody) channelID() string {
+	switch {
+	case b.ChannelID != "":
+		return b.ChannelID
+	case b.ChannelIDUpper != "":
+		return b.ChannelIDUpper
+	case b.ChannelIDSnake != "":
+		return b.ChannelIDSnake
+	case b.Channel.ID != "":
+		return b.Channel.ID
+	default:
+		return b.ID
+	}
+}
 
 func (s *server) streamTraqTriggers(ctx context.Context, accessToken string) (<-chan triggerPayload, <-chan error) {
 	out := make(chan triggerPayload)
@@ -94,23 +164,26 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 			return nil, nil
 		}
 		traqLogWS("MESSAGE_CREATED messageID=%s", body.ID)
-		channelID, isBot, err := s.fetchMessageInfo(ctx, s.cfg.traqBotAccessToken, body.ID)
-		if err != nil || isBot || channelID == "" {
-			if err == nil && isBot {
-				traqLogWarn("MESSAGE_CREATED skipped: bot messageID=%s channelID=%s", body.ID, channelID)
+		info, err := s.fetchMessageInfo(ctx, s.cfg.traqBotAccessToken, body.ID)
+		if err != nil || info.IsBot || info.ChannelID == "" {
+			if err == nil && info.IsBot {
+				traqLogWarn("MESSAGE_CREATED skipped: bot messageID=%s channelID=%s", body.ID, info.ChannelID)
 			}
-			if err == nil && !isBot && channelID == "" {
+			if err == nil && !info.IsBot && info.ChannelID == "" {
 				traqLogWarn("MESSAGE_CREATED skipped: empty channel messageID=%s", body.ID)
 			}
 			return nil, err
 		}
-		traqLogOK("MESSAGE_CREATED accepted messageID=%s channelID=%s", body.ID, channelID)
+		traqLogOK("MESSAGE_CREATED accepted messageID=%s channelID=%s", body.ID, info.ChannelID)
 		return []triggerPayload{{
-			Type:         "msg",
-			Ch:           channelID,
-			MessageID:    body.ID,
-			Source:       "ws",
-			SourceDetail: "traQ /api/v3/ws timeline_streaming:on MESSAGE_CREATED",
+			Type:             "msg",
+			Ch:               info.ChannelID,
+			MessageID:        body.ID,
+			MessageUserID:    info.UserID,
+			MessageLength:    info.Length,
+			HasMessageLength: true,
+			Source:           "ws",
+			SourceDetail:     "traQ /api/v3/ws timeline_streaming:on MESSAGE_CREATED",
 		}}, nil
 	case "USER_VIEWSTATE_CHANGED":
 		var body wsViewStateChangedBody
@@ -140,55 +213,61 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 		}
 		traqLogWS("USER_VIEWSTATE_CHANGED viewStates=%d triggers=%d", len(body.ViewStates), len(triggers))
 		return triggers, nil
+	case "CHANNEL_VIEWERS_CHANGED":
+		var body wsChannelViewersChangedBody
+		if err := json.Unmarshal(event.Body, &body); err != nil {
+			return nil, err
+		}
+		channelID := body.channelID()
+		if channelID == "" {
+			traqLogWarn("CHANNEL_VIEWERS_CHANGED skipped: empty channel id")
+			return nil, nil
+		}
+		traqLogWS("CHANNEL_VIEWERS_CHANGED channelID=%s", channelID)
+		if s.viewerHub != nil {
+			s.viewerHub.publish(viewerSignal{ChannelID: channelID})
+		}
+		return nil, nil
 	default:
 		return nil, nil
 	}
 }
 
-func (s *server) fetchMessageInfo(ctx context.Context, accessToken string, messageID string) (string, bool, error) {
+func (s *server) fetchMessageInfo(ctx context.Context, accessToken string, messageID string) (messageInfo, error) {
 	traqLogAPI("GET /api/v3/messages/%s", messageID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/messages/"+url.PathEscape(messageID), nil)
-	if err != nil {
-		return "", false, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		traqLogError("GET /api/v3/messages/%s failed: %v", messageID, err)
-		return "", false, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode == http.StatusNotFound {
-		traqLogWarn("GET /api/v3/messages/%s -> %s", messageID, resp.Status)
-		return "", false, nil
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		traqLogError("GET /api/v3/messages/%s -> %s", messageID, resp.Status)
-		return "", false, fmt.Errorf("message endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
 	var message traqMessage
-	if err := json.Unmarshal(body, &message); err != nil {
-		return "", false, err
+	status, err := s.traqGetJSON(ctx, accessToken, "/api/v3/messages/"+url.PathEscape(messageID), &message)
+	if err != nil {
+		if status == http.StatusNotFound {
+			traqLogWarn("GET /api/v3/messages/%s not found", messageID)
+			return messageInfo{}, nil
+		}
+		traqLogError("GET /api/v3/messages/%s: %v", messageID, err)
+		return messageInfo{}, err
 	}
 	if message.UserID == "" {
-		return "", false, fmt.Errorf("message endpoint returned empty userId for %s", messageID)
+		return messageInfo{}, fmt.Errorf("message endpoint returned empty userId for %s", messageID)
+	}
+	info := messageInfo{
+		ChannelID: message.ChannelID,
+		UserID:    message.UserID,
+		Length:    len([]rune(message.Content)),
 	}
 
 	if isBot, ok := s.cachedUserIsBot(message.UserID); ok {
-		traqLogOK("GET /api/v3/messages/%s -> %s channelID=%s userID=%s bot=%t botCache=hit", messageID, resp.Status, message.ChannelID, message.UserID, isBot)
-		return message.ChannelID, isBot, nil
+		traqLogOK("GET /api/v3/messages/%s channelID=%s userID=%s bot=%t botCache=hit", messageID, message.ChannelID, message.UserID, isBot)
+		info.IsBot = isBot
+		return info, nil
 	}
 
 	isBot, err := s.fetchUserIsBot(ctx, accessToken, message.UserID)
 	if err != nil {
-		return "", false, err
+		return messageInfo{}, err
 	}
 	s.storeUserIsBot(message.UserID, isBot)
-	traqLogOK("GET /api/v3/messages/%s -> %s channelID=%s userID=%s bot=%t botCache=miss", messageID, resp.Status, message.ChannelID, message.UserID, isBot)
-	return message.ChannelID, isBot, nil
+	traqLogOK("GET /api/v3/messages/%s channelID=%s userID=%s bot=%t botCache=miss", messageID, message.ChannelID, message.UserID, isBot)
+	info.IsBot = isBot
+	return info, nil
 }
 
 func (s *server) cachedUserIsBot(userID string) (bool, bool) {
@@ -232,29 +311,12 @@ func (s *server) evictRandomUserBotLocked() {
 
 func (s *server) fetchUserIsBot(ctx context.Context, accessToken string, userID string) (bool, error) {
 	traqLogAPI("GET /api/v3/users/%s", userID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/users/"+url.PathEscape(userID), nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		traqLogError("GET /api/v3/users/%s failed: %v", userID, err)
-		return false, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		traqLogError("GET /api/v3/users/%s -> %s", userID, resp.Status)
-		return false, fmt.Errorf("user endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
 	var user traqUser
-	if err := json.Unmarshal(body, &user); err != nil {
+	if _, err := s.traqGetJSON(ctx, accessToken, "/api/v3/users/"+url.PathEscape(userID), &user); err != nil {
+		traqLogError("GET /api/v3/users/%s: %v", userID, err)
 		return false, err
 	}
-	traqLogOK("GET /api/v3/users/%s -> %s bot=%t", userID, resp.Status, user.Bot)
+	traqLogOK("GET /api/v3/users/%s bot=%t", userID, user.Bot)
 	return user.Bot, nil
 }
 

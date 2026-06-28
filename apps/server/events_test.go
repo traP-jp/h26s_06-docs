@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestPublishTriggerReturnsAppliedMessageForViewerSampling(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{{ID: "active", Name: "active"}})
@@ -41,5 +45,15 @@ func TestTriggerInActiveChannelsAllowsClearCurrentFromActiveChannel(t *testing.T
 	}
 	if triggerInActiveChannels(triggerPayload{Type: "mov", From: "inactive", ClearCurrent: true}, active) {
 		t.Fatal("clear current trigger from inactive channel was accepted")
+	}
+}
+
+func TestTriggerPayloadAlwaysIncludesDelta(t *testing.T) {
+	data, err := json.Marshal(triggerPayload{Type: "msg", Ch: "active"})
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+	if !strings.Contains(string(data), `"delta":0`) {
+		t.Fatalf("payload = %s, want zero delta field", data)
 	}
 }

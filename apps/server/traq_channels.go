@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+type traqChannelList struct {
+	Public []traqChannel `json:"public"`
+}
+
 func (s *server) fetchChannelData(ctx context.Context, accessToken string) (channelData, error) {
 	traqLogAPI("GET /api/v3/channels")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/channels", nil)
@@ -43,7 +47,6 @@ func (s *server) fetchChannelData(ctx context.Context, accessToken string) (chan
 	return channelData{
 		Channels:   channels,
 		ChannelIDs: channelIDSet(channels),
-		InitJSON:   state.initPayloadBytes(),
 		State:      state,
 	}, nil
 }

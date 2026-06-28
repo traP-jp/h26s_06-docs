@@ -49,6 +49,37 @@ func TestStateManagerApplyTriggerSkipsDuplicateMovement(t *testing.T) {
 	}
 }
 
+func TestStateManagerApplyTriggerAddsMovementScore(t *testing.T) {
+	parentID := "root"
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: parentID, Name: "root"},
+		{ID: "child", Name: "child", ParentID: &parentID},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	applied, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "child"})
+	if !ok {
+		t.Fatal("movement was not applied")
+	}
+	if applied.ScoreDelta != movementScoreAmount {
+		t.Fatalf("delta = %v, want %v", applied.ScoreDelta, movementScoreAmount)
+	}
+
+	state.mu.RLock()
+	childScore := state.channels["child"].Score
+	parentScore := state.channels[parentID].Score
+	state.mu.RUnlock()
+	if childScore != movementScoreAmount {
+		t.Fatalf("child score = %v, want %v", childScore, movementScoreAmount)
+	}
+	wantParentScore := movementScoreAmount * ancestorScoreFactor
+	if math.Abs(parentScore-wantParentScore) > 0.000_001 {
+		t.Fatalf("parent score = %v, want %v", parentScore, wantParentScore)
+	}
+}
+
 func TestStateManagerApplyTriggerClearsCurrentChannelWithoutPublishing(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{
 		{ID: "a", Name: "a"},
@@ -75,8 +106,36 @@ func TestStateManagerApplyTriggerClearsCurrentChannelWithoutPublishing(t *testin
 	if !ok {
 		t.Fatal("movement after clear was not applied")
 	}
-	if applied.From != "" {
-		t.Fatalf("inferred From = %q, want empty", applied.From)
+	if applied.From != "a" {
+		t.Fatalf("inferred From = %q, want a", applied.From)
+	}
+}
+
+func TestStateManagerApplyTriggerSkipsSameChannelAfterClear(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "a", Name: "a"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "a"}); !ok {
+		t.Fatal("initial movement was not applied")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", From: "a", ClearCurrent: true}); ok {
+		t.Fatal("clear current trigger was published")
+	}
+	if _, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "a"}); ok {
+		t.Fatal("same-channel state change was applied as movement")
+	}
+
+	state.mu.RLock()
+	current := state.users["u1"].CurrentChannel
+	lastViewed := state.users["u1"].LastViewedChannel
+	state.mu.RUnlock()
+	if current != "" {
+		t.Fatalf("CurrentChannel = %q, want empty", current)
+	}
+	if lastViewed != "a" {
+		t.Fatalf("LastViewedChannel = %q, want a", lastViewed)
 	}
 }
 
@@ -107,6 +166,28 @@ func TestStateManagerApplyTriggerIgnoresStaleClearCurrent(t *testing.T) {
 	}
 }
 
+func TestStateManagerClearUserStatusDoesNotCreateUser(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "a", Name: "a"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	if ok := state.clearUserStatus("unknown-user"); ok {
+		t.Fatal("clearUserStatus returned true for unknown user")
+	}
+
+	state.mu.RLock()
+	userCount := len(state.users)
+	_, exists := state.users["unknown-user"]
+	state.mu.RUnlock()
+	if userCount != 0 {
+		t.Fatalf("users count = %d, want 0", userCount)
+	}
+	if exists {
+		t.Fatal("unknown user was created")
+	}
+}
+
 func TestStateManagerApplyTriggerSkipsDuplicateMessage(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
 	if err != nil {
@@ -126,6 +207,228 @@ func TestStateManagerApplyTriggerSkipsDuplicateMessage(t *testing.T) {
 	state.mu.RUnlock()
 	if score != messageScoreAmount {
 		t.Fatalf("root score = %v, want %v", score, messageScoreAmount)
+	}
+}
+
+func TestStateManagerApplyTriggerUsesMessageLengthScoreDelta(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	applied, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("message was not applied")
+	}
+
+	want := messageScoreAmount
+	if applied.ScoreDelta != want {
+		t.Fatalf("delta = %v, want %v", applied.ScoreDelta, want)
+	}
+	state.mu.RLock()
+	score := state.channels["root"].Score
+	state.mu.RUnlock()
+	if score != want {
+		t.Fatalf("root score = %v, want %v", score, want)
+	}
+}
+
+func TestStateManagerApplyTriggerReducesRepeatedMessageScoreByUserAndChannel(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "root", Name: "root"},
+		{ID: "other", Name: "other"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	first, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-1",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("first message was not applied")
+	}
+
+	second, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-2",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("second message was not applied")
+	}
+
+	otherUser, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-3",
+		MessageUserID:    "user-2",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("other user message was not applied")
+	}
+
+	otherChannel, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "other",
+		MessageID:        "message-4",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("other channel message was not applied")
+	}
+
+	if first.ScoreDelta != messageScoreAmount {
+		t.Fatalf("first delta = %v, want %v", first.ScoreDelta, messageScoreAmount)
+	}
+	if math.Abs(second.ScoreDelta-messageScoreAmount/2) > 0.01 {
+		t.Fatalf("second delta = %v, want about %v", second.ScoreDelta, messageScoreAmount/2)
+	}
+	if otherUser.ScoreDelta != messageScoreAmount {
+		t.Fatalf("other user delta = %v, want %v", otherUser.ScoreDelta, messageScoreAmount)
+	}
+	if otherChannel.ScoreDelta != messageScoreAmount {
+		t.Fatalf("other channel delta = %v, want %v", otherChannel.ScoreDelta, messageScoreAmount)
+	}
+}
+
+func TestStateManagerMessageScoreReductionDecaysOverTime(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	now := time.Now()
+	state.mu.Lock()
+	state.storeMessageCountLocked("root", "user-1", 4, now.Add(-messageCountTimeScale*time.Second))
+	state.mu.Unlock()
+
+	applied, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-1",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("message was not applied")
+	}
+
+	decayedCount := 4 * math.Exp(-1)
+	want := messageScoreAmount / (1 + decayedCount)
+	if math.Abs(applied.ScoreDelta-want) > 0.01 {
+		t.Fatalf("delta = %v, want about %v", applied.ScoreDelta, want)
+	}
+}
+
+func TestStateManagerSyncPayloadDecaysMessageCounts(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	now := time.Now()
+	state.mu.Lock()
+	state.storeMessageCountLocked("root", "user-1", 4, now.Add(-messageCountTimeScale*time.Second))
+	state.mu.Unlock()
+
+	_ = state.syncPayload()
+
+	state.mu.RLock()
+	got := state.messageCounts["root"]["user-1"].Count
+	state.mu.RUnlock()
+
+	want := 4 * math.Exp(-1)
+	if math.Abs(got-want) > 0.01 {
+		t.Fatalf("message count = %v, want about %v", got, want)
+	}
+}
+
+func TestMessageScoreDeltaUsesReferenceCharacterCount(t *testing.T) {
+	tests := []struct {
+		name   string
+		length int
+		want   float64
+	}{
+		{
+			name:   "empty",
+			length: 0,
+			want:   0,
+		},
+		{
+			name:   "single character",
+			length: 1,
+			want: messageScoreAmount *
+				math.Log1p(1) /
+				math.Log1p(float64(messageScoreReferenceChars)),
+		},
+		{
+			name:   "shorter than reference",
+			length: 10,
+			want: messageScoreAmount *
+				math.Log1p(10) /
+				math.Log1p(float64(messageScoreReferenceChars)),
+		},
+		{
+			name:   "reference length",
+			length: messageScoreReferenceChars,
+			want:   messageScoreAmount,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			trigger := triggerPayload{
+				Type:             "msg",
+				Ch:               "root",
+				MessageLength:    tt.length,
+				HasMessageLength: true,
+			}
+
+			if got := messageScoreDelta(trigger); got != tt.want {
+				t.Fatalf("messageScoreDelta() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStateManagerInitPayloadIncludesCurrentScore(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	now := time.Now()
+	state.mu.Lock()
+	state.channels["root"].Score = 1.26
+	state.channels["root"].LastDecayTime = now
+	state.mu.Unlock()
+
+	var payload initPayload
+	if err := json.Unmarshal(state.initPayloadBytes(), &payload); err != nil {
+		t.Fatalf("init payload is invalid JSON: %v", err)
+	}
+	if got := payload.Channels["root"].Score; got != 1.26 {
+		t.Fatalf("root init score = %v, want 1.26", got)
 	}
 }
 
@@ -246,6 +549,26 @@ func TestStateManagerSyncPayloadCapsDeltasAtOneHundred(t *testing.T) {
 	payload := state.syncPayload()
 	if len(payload.Deltas) != maxSyncPayloadDeltas {
 		t.Fatalf("sync deltas = %d, want %d", len(payload.Deltas), maxSyncPayloadDeltas)
+	}
+}
+
+func TestRoundedScoreUsesThreeDecimalPlaces(t *testing.T) {
+	tests := []struct {
+		name  string
+		score float64
+		want  float64
+	}{
+		{name: "rounds down", score: 1.2344, want: 1.234},
+		{name: "rounds up", score: 1.2345, want: 1.235},
+		{name: "keeps three decimal places", score: 0.123, want: 0.123},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := roundedScore(tt.score); got != tt.want {
+				t.Fatalf("roundedScore(%v) = %v, want %v", tt.score, got, tt.want)
+			}
+		})
 	}
 }
 

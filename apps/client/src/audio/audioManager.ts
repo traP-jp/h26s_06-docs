@@ -1,8 +1,11 @@
 import bgmUrl from "./bgm.mp3";
+import bloomUrl from "./bloom.mp3";
+import closeUrl from "./close.mp3";
 import moveUrl from "./move.mp3";
 import postUrl from "./post.mp3";
 
-type SfxName = "post" | "move";
+type SfxName = "post" | "move" | "bloom" | "close";
+type AudioName = "bgm" | SfxName;
 
 type StorageKeys = {
     muted: string;
@@ -37,8 +40,16 @@ const DEFAULT_SETTINGS: AudioSettings = {
     muted: false,
     masterVolume: 0.5,
     bgmVolume: 0.3,
-    sfxVolume: 0.1,
+    sfxVolume: 0.4,
 };
+
+const AUDIO_VOLUME_MULTIPLIERS = {
+    bgm: 1.0,
+    post: 0.5,
+    move: 0.4,
+    bloom: 1.8,
+    close: 2.3,
+} as const satisfies Record<AudioName, number>;
 
 const VOLUME_FADE_DURATION_MS = 600;
 
@@ -76,22 +87,30 @@ class AudioManager {
         this.sfxPools = {
             post: this.createAudioPool(postUrl, 4),
             move: this.createAudioPool(moveUrl, 4),
+            bloom: this.createAudioPool(bloomUrl, 4),
+            close: this.createAudioPool(closeUrl, 4),
         };
 
         this.lastPlayedAt = {
             post: 0,
             move: 0,
+            bloom: 0,
+            close: 0,
         };
 
         this.cooldownMs = {
             post: 100,
             move: 150,
+            bloom: 200,
+            close: 200,
         };
 
         this.maxActiveSfx = {
             total: 5,
             post: 3,
             move: 2,
+            bloom: 2,
+            close: 2,
         };
 
         this.applyMuted();
@@ -148,7 +167,13 @@ class AudioManager {
     }
 
     getAllAudioElements(): HTMLAudioElement[] {
-        return [this.bgm, ...this.sfxPools.post, ...this.sfxPools.move];
+        return [
+            this.bgm,
+            ...this.sfxPools.post,
+            ...this.sfxPools.move,
+            ...this.sfxPools.bloom,
+            ...this.sfxPools.close,
+        ];
     }
 
     applyMuted(): void {
@@ -157,21 +182,28 @@ class AudioManager {
         }
     }
 
+    getTargetVolume(categoryVolume: number, audioName: AudioName): number {
+        if (this.muted) return 0;
+
+        return this.clampVolume(
+            this.masterVolume * categoryVolume * AUDIO_VOLUME_MULTIPLIERS[audioName]
+        );
+    }
+
     applyVolumes(durationMs = 0): void {
         if (this.volumeAnimationFrame !== undefined) {
             cancelAnimationFrame(this.volumeAnimationFrame);
             this.volumeAnimationFrame = undefined;
         }
 
+        const sfxTargets = (Object.keys(this.sfxPools) as SfxName[]).flatMap(name =>
+            this.sfxPools[name].map(
+                audio => [audio, this.getTargetVolume(this.sfxVolume, name)] as const
+            )
+        );
         const targets = new Map<HTMLAudioElement, number>([
-            [this.bgm, this.muted ? 0 : this.clampVolume(this.masterVolume * this.bgmVolume)],
-            ...[...this.sfxPools.post, ...this.sfxPools.move].map(
-                audio =>
-                    [
-                        audio,
-                        this.muted ? 0 : this.clampVolume(this.masterVolume * this.sfxVolume),
-                    ] as const
-            ),
+            [this.bgm, this.getTargetVolume(this.bgmVolume, "bgm")],
+            ...sfxTargets,
         ]);
 
         if (durationMs <= 0) {
@@ -186,11 +218,12 @@ class AudioManager {
         const startedAt = performance.now();
 
         const updateVolumes = (now: number): void => {
-            const progress = Math.min((now - startedAt) / durationMs, 1);
+            const progress = this.clampVolume((now - startedAt) / durationMs);
 
             for (const [audio, targetVolume] of targets) {
                 const initialVolume = initialVolumes.get(audio) ?? targetVolume;
-                audio.volume = initialVolume + (targetVolume - initialVolume) * progress;
+                const volume = initialVolume + (targetVolume - initialVolume) * progress;
+                audio.volume = this.clampVolume(volume);
             }
 
             if (progress < 1) {
@@ -362,6 +395,14 @@ class AudioManager {
 
     playMove(): void {
         this.playSfx("move");
+    }
+
+    playBloom(): void {
+        this.playSfx("bloom");
+    }
+
+    playClose(): void {
+        this.playSfx("close");
     }
 }
 

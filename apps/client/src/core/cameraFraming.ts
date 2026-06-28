@@ -1,75 +1,82 @@
-export interface Point3 {
+export interface CameraFramingPoint {
     x: number;
     y: number;
     z: number;
+    radius?: number;
 }
 
-export interface CameraFramePoint {
-    position: Point3;
-    radius: number;
+interface CameraFrame {
+    target: CameraFramingPoint;
+    distance: number;
 }
 
-export interface CameraFrameOptions {
-    cameraDirection: Point3;
-    verticalFovDegrees: number;
-    aspect: number;
-    viewportMargin?: number;
-    minimumDistance?: number;
-}
+const DEFAULT_PADDING = 2.3;
+const DEFAULT_MARGIN = 14;
+const DEFAULT_MIN_DISTANCE = 160;
 
-const DEFAULT_VIEWPORT_MARGIN = 0.18;
-const MINIMUM_TANGENT = 0.001;
+export function calculateCameraFrame(
+    points: readonly CameraFramingPoint[],
+    cameraDirection: CameraFramingPoint,
+    verticalFieldOfViewDegrees: number,
+    aspect: number,
+    targetPoint?: CameraFramingPoint
+): CameraFrame {
+    const direction = normalize(cameraDirection, { x: 0, y: 0, z: 1 });
+    const referenceUp = Math.abs(direction.y) < 0.98 ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 };
+    const right = normalize(cross(referenceUp, direction), { x: 1, y: 0, z: 0 });
+    const up = cross(direction, right);
+    const framePoints = points.length > 0 ? points : [{ x: 0, y: 0, z: 0 }];
 
-export function calculateFramedCameraDistance(
-    target: Point3,
-    points: readonly CameraFramePoint[],
-    options: CameraFrameOptions
-) {
-    const direction = normalize(options.cameraDirection);
-    const basis = createCameraBasis(direction);
-    const verticalTangent =
-        Math.tan((Math.max(1, options.verticalFovDegrees) * Math.PI) / 360) *
-        viewportScale(options.viewportMargin);
-    const horizontalTangent = verticalTangent * Math.max(0.01, options.aspect);
-    let distance = options.minimumDistance ?? 0;
+    const rightRange = projectedRange(framePoints, right);
+    const upRange = projectedRange(framePoints, up);
+    const depthRange = projectedRange(framePoints, direction);
+    const target =
+        targetPoint ??
+        add(
+            add(scale(right, midpoint(rightRange)), scale(up, midpoint(upRange))),
+            scale(direction, midpoint(depthRange))
+        );
 
-    for (const point of points) {
-        const offset = subtract(point.position, target);
-        const alongViewDirection = dot(offset, direction);
-        const horizontal = Math.abs(dot(offset, basis.right)) + Math.max(0, point.radius);
-        const vertical = Math.abs(dot(offset, basis.up)) + Math.max(0, point.radius);
+    const verticalTangent = Math.tan((verticalFieldOfViewDegrees * Math.PI) / 360);
+    const horizontalTangent = verticalTangent * Math.max(aspect, 0.01);
+    let distance = DEFAULT_MIN_DISTANCE;
 
+    for (const point of framePoints) {
+        const relative = subtract(point, target);
+        const radius = Math.max(0, point.radius ?? 0);
+        const horizontalExtent = Math.abs(dot(relative, right)) + DEFAULT_MARGIN + radius;
+        const verticalExtent = Math.abs(dot(relative, up)) + DEFAULT_MARGIN + radius;
+        const depth = dot(relative, direction);
         distance = Math.max(
             distance,
-            alongViewDirection + horizontal / Math.max(MINIMUM_TANGENT, horizontalTangent),
-            alongViewDirection + vertical / Math.max(MINIMUM_TANGENT, verticalTangent)
+            depth + (horizontalExtent * DEFAULT_PADDING) / horizontalTangent,
+            depth + (verticalExtent * DEFAULT_PADDING) / verticalTangent
         );
     }
 
-    return distance;
+    return { target, distance };
 }
 
-function viewportScale(margin = DEFAULT_VIEWPORT_MARGIN) {
-    return Math.max(0.05, 1 - Math.min(0.45, Math.max(0, margin)));
+function projectedRange(points: readonly CameraFramingPoint[], axis: CameraFramingPoint) {
+    let minimum = Number.POSITIVE_INFINITY;
+    let maximum = Number.NEGATIVE_INFINITY;
+    for (const point of points) {
+        const projection = dot(point, axis);
+        minimum = Math.min(minimum, projection);
+        maximum = Math.max(maximum, projection);
+    }
+    return { minimum, maximum };
 }
 
-function createCameraBasis(direction: Point3) {
-    const reference =
-        Math.abs(direction.y) < 0.92 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
-    const right = normalize(cross(reference, direction));
-    const up = normalize(cross(direction, right));
-    return { right, up };
+function midpoint(range: { minimum: number; maximum: number }) {
+    return (range.minimum + range.maximum) / 2;
 }
 
-function subtract(left: Point3, right: Point3): Point3 {
-    return { x: left.x - right.x, y: left.y - right.y, z: left.z - right.z };
-}
-
-function dot(left: Point3, right: Point3) {
+function dot(left: CameraFramingPoint, right: CameraFramingPoint) {
     return left.x * right.x + left.y * right.y + left.z * right.z;
 }
 
-function cross(left: Point3, right: Point3): Point3 {
+function cross(left: CameraFramingPoint, right: CameraFramingPoint): CameraFramingPoint {
     return {
         x: left.y * right.z - left.z * right.y,
         y: left.z * right.x - left.x * right.z,
@@ -77,8 +84,19 @@ function cross(left: Point3, right: Point3): Point3 {
     };
 }
 
-function normalize(point: Point3) {
+function add(left: CameraFramingPoint, right: CameraFramingPoint): CameraFramingPoint {
+    return { x: left.x + right.x, y: left.y + right.y, z: left.z + right.z };
+}
+
+function subtract(left: CameraFramingPoint, right: CameraFramingPoint): CameraFramingPoint {
+    return { x: left.x - right.x, y: left.y - right.y, z: left.z - right.z };
+}
+
+function scale(point: CameraFramingPoint, amount: number): CameraFramingPoint {
+    return { x: point.x * amount, y: point.y * amount, z: point.z * amount };
+}
+
+function normalize(point: CameraFramingPoint, fallback: CameraFramingPoint): CameraFramingPoint {
     const length = Math.hypot(point.x, point.y, point.z);
-    if (length < 0.001) return { x: 0, y: 0, z: 1 };
-    return { x: point.x / length, y: point.y / length, z: point.z / length };
+    return length < 0.001 ? fallback : scale(point, 1 / length);
 }

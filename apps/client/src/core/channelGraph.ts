@@ -14,12 +14,10 @@ const PALETTE = [
 const DENSE_CHILD_THRESHOLD = 24;
 const DENSE_EMPHASIZED_CHILDREN = 12;
 const CONDENSED_EMPHASIS = 0.22;
-const MESSAGE_SCORE_AMOUNT = 1.0;
-const MOVEMENT_SCORE_AMOUNT = 0.25;
 const ANCESTOR_SCORE_FACTOR = 0.45;
 const SCORE_DECAY_TIME_SCALE = 300;
 const RELATIVE_SCORE_SCALE_FLOOR = 2.2;
-const ACTIVE_RELATIVE_SCORE_THRESHOLD = 0.08;
+export const ACTIVE_RELATIVE_SCORE_THRESHOLD = 0.08;
 
 export interface ChannelNode {
     index: number;
@@ -42,6 +40,7 @@ export interface ChannelNode {
     isLayoutActive: boolean;
     isExpansionOrigin: boolean;
     emphasis: number;
+    activeDescendantScore: number;
     color: string;
 }
 
@@ -52,13 +51,18 @@ export type VisualEvent =
 export class ChannelGraph {
     readonly nodes: ChannelNode[];
     private readonly nodeMap = new Map<string, number>();
+    private readonly parentIndices: Int32Array;
     private readonly visualEvents: VisualEvent[] = [];
+    private readonly pendingMessageRevealIds = new Set<string>();
     private snapNextSync = false;
     private scoreScale = RELATIVE_SCORE_SCALE_FLOOR;
 
     constructor(channels: ChannelDictionary) {
         const ordered = orderChannels(channels);
+        this.scoreScale = initialScoreScale(ordered);
+
         this.nodes = ordered.map((channel, index) => {
+            const score = sanitizeScore(channel.score);
             this.nodeMap.set(channel.id, index);
             return {
                 index,
@@ -68,9 +72,9 @@ export class ChannelGraph {
                 children: [],
                 islandId: channel.islandId ?? -1,
                 depth: channel.depth ?? 0,
-                currentScore: 0,
-                targetScore: 0,
-                relativeScore: 0,
+                currentScore: score,
+                targetScore: score,
+                relativeScore: Math.min(1, score / this.scoreScale),
                 x: 0,
                 y: 0,
                 z: 0,
@@ -81,6 +85,7 @@ export class ChannelGraph {
                 isLayoutActive: false,
                 isExpansionOrigin: false,
                 emphasis: 1,
+                activeDescendantScore: 0,
                 color:
                     channel.id === "grand_root"
                         ? "#ffffff"
@@ -88,13 +93,20 @@ export class ChannelGraph {
             };
         });
 
+        this.parentIndices = new Int32Array(this.nodes.length);
+        this.parentIndices.fill(-1);
+
         for (const channel of ordered) {
             const node = this.get(channel.id);
             if (!node) continue;
+            if (node.parentId) {
+                this.parentIndices[node.index] = this.nodeMap.get(node.parentId) ?? -1;
+            }
             node.children = channel.children
                 ?.map(id => this.nodeMap.get(id))
                 .filter((index): index is number => index !== undefined);
         }
+        this.updateActiveDescendantScores();
     }
 
     get(id: string) {
@@ -112,8 +124,37 @@ export class ChannelGraph {
         return result;
     }
 
+    navigationTargets(id: string, preferredChildId?: string) {
+        const node = this.get(id);
+        if (!node) {
+            return {};
+        }
+
+        const parent = node.parentId ? this.get(node.parentId) : undefined;
+        const children = this.sortedNodes(node.children);
+        const siblings = parent ? this.sortedNodes(parent.children) : [];
+        const siblingIndex = siblings.findIndex(sibling => sibling.id === node.id);
+        const preferredChild = preferredChildId
+            ? children.find(child => child.id === preferredChildId)
+            : undefined;
+
+        return {
+            parentId: parent?.id,
+            childId: preferredChild?.id ?? children[0]?.id,
+            previousSiblingId:
+                siblingIndex >= 0 && siblings.length > 1
+                    ? siblings[(siblingIndex - 1 + siblings.length) % siblings.length]?.id
+                    : undefined,
+            nextSiblingId:
+                siblingIndex >= 0 && siblings.length > 1
+                    ? siblings[(siblingIndex + 1) % siblings.length]?.id
+                    : undefined,
+        };
+    }
+
     applyTrigger(trigger: TriggerPayload) {
         const id = trigger.type === "msg" ? trigger.ch : trigger.to;
+        let visibilityChanged = false;
 
         const getActiveAncestor = (nodeId?: string) => {
             let n = nodeId ? this.get(nodeId) : undefined;
@@ -123,12 +164,12 @@ export class ChannelGraph {
             return n?.id;
         };
 
-        const effectiveCh = getActiveAncestor(trigger.type === "msg" ? trigger.ch : undefined);
         const effectiveFrom = getActiveAncestor(trigger.type === "mov" ? trigger.from : undefined);
         const effectiveTo = getActiveAncestor(trigger.type === "mov" ? trigger.to : undefined);
 
-        if (trigger.type === "msg" && effectiveCh) {
-            this.enqueueVisualEvent({ type: "message", channelId: effectiveCh });
+        if (trigger.type === "msg" && this.get(trigger.ch)) {
+            visibilityChanged = this.prepareMessagePath(trigger.ch);
+            this.enqueueVisualEvent({ type: "message", channelId: trigger.ch });
         } else if (
             trigger.type === "mov" &&
             effectiveFrom &&
@@ -139,22 +180,38 @@ export class ChannelGraph {
         }
 
         let node = this.get(id);
-        let heat = trigger.type === "msg" ? MESSAGE_SCORE_AMOUNT : MOVEMENT_SCORE_AMOUNT;
+        let heat = trigger.delta ?? 0;
         while (node) {
             node.currentScore += heat;
-            node.targetScore = Math.max(node.targetScore, node.currentScore * 0.62);
+            node.targetScore += heat;
             heat *= ANCESTOR_SCORE_FACTOR;
             node = node.parentId ? this.get(node.parentId) : undefined;
         }
+
+        return visibilityChanged;
     }
 
     sync(deltas: Record<string, number>) {
+        const comparisons: {
+            channelId: string;
+            clientValue: number;
+            trueValue: number;
+            difference: number;
+        }[] = [];
+
         for (const [id, score] of Object.entries(deltas)) {
             const node = this.get(id);
             if (!node) continue;
+            comparisons.push({
+                channelId: id,
+                clientValue: node.currentScore,
+                trueValue: score,
+                difference: score - node.currentScore,
+            });
             node.targetScore = score;
             if (this.snapNextSync) node.currentScore = score;
         }
+        console.table(comparisons);
         this.snapNextSync = false;
     }
 
@@ -168,6 +225,11 @@ export class ChannelGraph {
 
     clearVisualEvents() {
         this.visualEvents.length = 0;
+        this.pendingMessageRevealIds.clear();
+    }
+
+    revealMessageNode(id: string) {
+        return this.pendingMessageRevealIds.delete(id);
     }
 
     applyLayout(positions: Float32Array, isInitial = false) {
@@ -206,6 +268,7 @@ export class ChannelGraph {
         } else {
             const path = this.path(selectedId);
             const pathIds = new Set(path.map(p => p.id));
+            for (const id of pathIds) this.pendingMessageRevealIds.delete(id);
 
             for (const id of this.clickedIds) {
                 if (!pathIds.has(id)) {
@@ -254,7 +317,9 @@ export class ChannelGraph {
             }
 
             let shouldBeActive = false;
-            if (node.depth < k) {
+            if (this.pendingMessageRevealIds.has(node.id)) {
+                shouldBeActive = true;
+            } else if (node.depth < k) {
                 shouldBeActive = true;
             } else if (node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD) {
                 shouldBeActive = true;
@@ -278,6 +343,7 @@ export class ChannelGraph {
                         node.targetZ = parent.targetZ;
                     }
                 } else if (!shouldBeActive && node.isLayoutActive) {
+                    this.pendingMessageRevealIds.delete(node.id);
                     const parent = node.parentId ? this.get(node.parentId) : undefined;
                     if (parent) {
                         node.targetX = parent.targetX;
@@ -295,7 +361,25 @@ export class ChannelGraph {
                 changed = true;
             }
         }
+        this.updateActiveDescendantScores();
         return changed;
+    }
+
+    private updateActiveDescendantScores() {
+        for (const node of this.nodes) {
+            node.activeDescendantScore =
+                node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD ? node.relativeScore : 0;
+        }
+
+        for (let index = this.nodes.length - 1; index >= 0; index -= 1) {
+            const node = this.nodes[index];
+            if (!node) continue;
+            const parentIndex = this.parentIndices[index] ?? -1;
+            if (parentIndex < 0) continue;
+            const parent = this.nodes[parentIndex];
+            if (!parent || node.activeDescendantScore <= parent.activeDescendantScore) continue;
+            parent.activeDescendantScore = node.activeDescendantScore;
+        }
     }
 
     private pickDenseChildren(requiredIds: ReadonlySet<string>) {
@@ -330,6 +414,27 @@ export class ChannelGraph {
         return emphasizedIds;
     }
 
+    private prepareMessagePath(channelId: string) {
+        let changed = false;
+        for (const node of this.path(channelId)) {
+            if (node.isLayoutActive) continue;
+
+            const parent = node.parentId ? this.get(node.parentId) : undefined;
+            if (parent) {
+                node.x = parent.x;
+                node.y = parent.y;
+                node.z = parent.z;
+                node.targetX = parent.targetX;
+                node.targetY = parent.targetY;
+                node.targetZ = parent.targetZ;
+            }
+            node.isLayoutActive = true;
+            this.pendingMessageRevealIds.add(node.id);
+            changed = true;
+        }
+        return changed;
+    }
+
     update(deltaSeconds: number) {
         const decay = Math.exp(-deltaSeconds / SCORE_DECAY_TIME_SCALE);
         const blend = 1 - Math.exp(-deltaSeconds * 3.5);
@@ -338,8 +443,8 @@ export class ChannelGraph {
         let observedMaxScore = RELATIVE_SCORE_SCALE_FLOOR;
         for (const node of this.nodes) {
             node.currentScore *= decay;
-            node.currentScore += (node.targetScore - node.currentScore) * blend;
             node.targetScore *= decay;
+            node.currentScore += (node.targetScore - node.currentScore) * blend;
             if (node.currentScore < 0.01) node.currentScore = 0;
             if (node.targetScore < 0.01) node.targetScore = 0;
             observedMaxScore = Math.max(observedMaxScore, node.currentScore, node.targetScore);
@@ -353,12 +458,16 @@ export class ChannelGraph {
 
         for (const node of this.nodes) {
             node.relativeScore = Math.min(1, node.currentScore / this.scoreScale);
+        }
+        this.updateActiveDescendantScores();
 
+        for (const node of this.nodes) {
             node.x += (node.targetX - node.x) * spatialBlend;
             node.y += (node.targetY - node.y) * spatialBlend;
             node.z += (node.targetZ - node.z) * spatialBlend;
 
-            const targetAlpha = node.isLayoutActive ? 1.0 : 0.0;
+            const targetAlpha =
+                node.isLayoutActive && !this.pendingMessageRevealIds.has(node.id) ? 1.0 : 0.0;
             const alphaBlend =
                 targetAlpha < node.visibilityAlpha
                     ? 1 - Math.exp(-deltaSeconds * 24.0) // 素早くフェードアウト
@@ -371,6 +480,18 @@ export class ChannelGraph {
         if (this.visualEvents.length >= 128) this.visualEvents.shift();
         this.visualEvents.push(event);
     }
+
+    private sortedNodes(indices: readonly number[]) {
+        return indices
+            .map(index => this.nodes[index])
+            .filter((node): node is ChannelNode => node !== undefined)
+            .toSorted((left, right) =>
+                left.name.localeCompare(right.name, undefined, {
+                    numeric: true,
+                    sensitivity: "base",
+                })
+            );
+    }
 }
 
 function emphasisRank(index: number, parentIndex: number, generation: number) {
@@ -379,6 +500,17 @@ function emphasisRank(index: number, parentIndex: number, generation: number) {
     value = Math.imul(value ^ (value >>> 16), 0x7feb_352d);
     value = Math.imul(value ^ (value >>> 15), 0x846c_a68b);
     return (value ^ (value >>> 16)) >>> 0;
+}
+
+function sanitizeScore(score: number | undefined): number {
+    return typeof score === "number" && Number.isFinite(score) ? Math.max(0, score) : 0;
+}
+
+function initialScoreScale(channels: readonly import("../types/api").InitChannel[]): number {
+    return Math.max(
+        RELATIVE_SCORE_SCALE_FLOOR,
+        ...channels.map(channel => sanitizeScore(channel.score))
+    );
 }
 
 function orderChannels(channels: ChannelDictionary) {

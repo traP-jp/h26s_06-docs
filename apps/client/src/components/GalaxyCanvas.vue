@@ -15,6 +15,7 @@ import {
     PerspectiveCamera,
     SRGBColorSpace,
     Scene,
+    ShaderMaterial,
     SphereGeometry,
     Vector2,
     Vector3,
@@ -25,56 +26,131 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
-import { calculateCameraAvoidance } from "../core/cameraAvoidance";
-import {
-    calculateFramedCameraDistance,
-    type CameraFramePoint,
-} from "../core/cameraFraming";
-import type { ChannelGraph } from "../core/channelGraph";
+import { ACTIVE_RELATIVE_SCORE_THRESHOLD, type ChannelGraph } from "../core/channelGraph";
+import type {
+    CameraMoveDirection,
+    CameraRotationDirection,
+    CameraZoomDirection,
+} from "../core/keyboardController";
 import { NodeBuffer } from "../core/nodeBuffer";
+import { CameraController } from "../rendering/cameraController";
 import { EffectPool } from "../rendering/effectPool";
+import { HierarchyEdgeBuffer } from "../rendering/hierarchyEdgeBuffer";
 
 const props = defineProps<{
     graph: ChannelGraph;
     selectedId?: string;
     focusId?: string;
+    focusRevision: number;
     activeOnly: boolean;
 }>();
 const emit = defineEmits<{
     select: [id: string | undefined];
+    messageNodeReached: [id: string];
     renderError: [message: string];
 }>();
 const host = useTemplateRef<HTMLDivElement>("host");
+const selectionPathOpacity = 0.82;
+const rootEdgeColor = "#7b8798";
+const rootEdgeVisualOpacity = 0.26;
+const idleAutoRotationDelay = 5000;
+const idleAutoRotationRadiansPerSecond = 0.012;
+const keyboardPanAcceleration = 920;
+const keyboardPanMaxSpeed = 520;
+const keyboardPanDamping = 7.5;
+const keyboardRotationAcceleration = 760;
+const keyboardRotationMaxSpeed = 430;
+const keyboardRotationDamping = 8;
+const keyboardZoomAcceleration = 3.2;
+const keyboardZoomMaxSpeed = 1.8;
+const keyboardZoomDamping = 6;
+const keyboardMotionEpsilon = 0.01;
 
 let renderer: WebGLRenderer | undefined;
 let scene: Scene | undefined;
 let camera: PerspectiveCamera | undefined;
 let controls: OrbitControls | undefined;
+let cameraController: CameraController | undefined;
 let composer: EffectComposer | undefined;
 let effects: EffectPool | undefined;
-let nodes: InstancedMesh | undefined;
+let nodes: InstancedMesh<SphereGeometry, ShaderMaterial> | undefined;
 let hierarchyEdges: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let selectionPath: Line<BufferGeometry, LineBasicMaterial> | undefined;
-let cameraTransition:
-    | {
-          startedAt: number;
-          startPosition: Vector3;
-          startTarget: Vector3;
-          direction: Vector3;
-          distance: number;
-          positionOffset: Vector3;
-          framingNodeIds: string[];
-          nodeId: string;
-      }
-    | undefined;
 let frame = 0;
 let lastFrame = performance.now();
+let lastCameraInteractionAt = performance.now();
 let pointerDown = new Vector2();
+let pointerLast = new Vector2();
 let pointerMoved = false;
+let pointerButton = -1;
+let customRotationActive = false;
+let hoverPending = false;
 let resizeObserver: ResizeObserver | undefined;
 let nodeBuffer = new NodeBuffer(props.graph.nodes.length);
+let hierarchyEdgeBuffer = new HierarchyEdgeBuffer(props.graph.nodes);
+let hierarchyEdgeBaseColors = createEdgeBaseColors();
 const projectedNode = new Vector3();
+const hoverPointer = new Vector2();
 const instanceColor = new Color();
+const activeCameraMoveDirections = new Set<CameraMoveDirection>();
+const activeCameraZoomDirections = new Set<CameraZoomDirection>();
+const activeCameraRotationDirections = new Set<CameraRotationDirection>();
+const keyboardPanVelocity = new Vector2();
+const keyboardRotationVelocity = new Vector2();
+const keyboardPanInput = new Vector2();
+const keyboardRotationInput = new Vector2();
+let keyboardZoomVelocity = 0;
+const NODE_PICK_RADIUS = 28;
+const nodeVertexShader = `
+varying vec3 vColor;
+varying vec3 vObjectPosition;
+varying vec3 vViewNormal;
+
+void main() {
+    vColor = instanceColor;
+    vObjectPosition = position;
+    vec4 modelViewPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+    vViewNormal = normalize(normalMatrix * mat3(instanceMatrix) * normal);
+    gl_Position = projectionMatrix * modelViewPosition;
+}
+`;
+const nodeFragmentShader = `
+precision highp float;
+
+uniform float uTime;
+
+varying vec3 vColor;
+varying vec3 vObjectPosition;
+varying vec3 vViewNormal;
+
+float hash(vec3 p) {
+    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+}
+
+void main() {
+    vec3 normal = normalize(vViewNormal);
+    float facing = abs(normal.z);
+
+    float outerGlow = pow(facing, 0.24) * 0.16;
+    float glow = pow(facing, 0.82);
+    float softHalo = pow(facing, 3.8) * 0.28;
+    float nucleus = smoothstep(0.988, 1.0, facing);
+
+    vec3 cell = floor(normalize(vObjectPosition) * 22.0);
+    float seed = hash(cell);
+    float shimmerWave = sin(uTime * (1.5 + seed * 2.8) + seed * 18.0);
+    float shimmer = smoothstep(0.78, 1.0, shimmerWave) * smoothstep(0.64, 1.0, seed) * pow(facing, 2.2);
+
+    float alpha = outerGlow + glow * 0.26 + softHalo + nucleus * 0.82 + shimmer * 0.14;
+    alpha *= smoothstep(0.08, 0.34, length(vObjectPosition));
+
+    if (alpha < 0.006) discard;
+
+    vec3 nucleusColor = vec3(0.96, 0.98, 1.0);
+    vec3 color = vColor * (0.3 + outerGlow * 0.68 + glow * 0.98 + softHalo * 0.48) + nucleusColor * (nucleus * 1.55 + shimmer * 0.58);
+    gl_FragColor = vec4(color, alpha);
+}
+`;
 
 function initialise() {
     const element = host.value;
@@ -88,7 +164,7 @@ function initialise() {
         );
         const initialDistance = Math.max(620, graphExtent * 1.65);
         camera.far = Math.max(3000, initialDistance * 4);
-        camera.position.set(0, initialDistance * 0.12, initialDistance);
+        camera.position.set(0, 0, initialDistance);
         camera.updateProjectionMatrix();
 
         renderer = new WebGLRenderer({
@@ -104,8 +180,11 @@ function initialise() {
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.06;
+        controls.enableRotate = false;
         controls.minDistance = 80;
         controls.maxDistance = Math.max(1400, initialDistance * 2.5);
+        controls.enablePan = true;
+        cameraController = new CameraController(camera, controls);
 
         nodes = createNodeMesh();
         scene.add(nodes);
@@ -113,7 +192,7 @@ function initialise() {
         scene.add(hierarchyEdges);
         selectionPath = createSelectionPath();
         scene.add(selectionPath);
-        effects = new EffectPool(scene, props.graph);
+        effects = new EffectPool(scene, props.graph, id => emit("messageNodeReached", id));
         composer = new EffectComposer(renderer);
         composer.addPass(new RenderPass(scene, camera));
         composer.addPass(
@@ -129,13 +208,17 @@ function initialise() {
         renderer.domElement.addEventListener("pointerdown", onPointerDown);
         renderer.domElement.addEventListener("pointermove", onPointerMove);
         renderer.domElement.addEventListener("pointerup", onPointerUp);
+        renderer.domElement.addEventListener("pointerleave", onPointerLeave);
         renderer.domElement.addEventListener("webglcontextlost", onContextLost);
+        window.addEventListener("keydown", noteCameraInteraction);
+        window.addEventListener("mousedown", noteCameraInteraction);
         resizeObserver = new ResizeObserver(resize);
         resizeObserver.observe(element);
         document.addEventListener("visibilitychange", resetFrameClock);
         resize();
         updateSelectionPath(props.selectedId);
-        updateCameraTarget(props.focusId);
+        if (props.focusId) updateCameraTarget(props.focusId);
+        else centerInitialCamera();
         frame = requestAnimationFrame(draw);
     } catch {
         emit("renderError", "WebGLを初期化できませんでした");
@@ -143,12 +226,15 @@ function initialise() {
 }
 
 function createNodeMesh() {
-    const geometry = new SphereGeometry(1, 10, 8);
-    const material = new MeshBasicMaterial({
-        color: 0xffffff,
+    const geometry = new SphereGeometry(1, 18, 12);
+    const material = new ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0 },
+        },
+        vertexShader: nodeVertexShader,
+        fragmentShader: nodeFragmentShader,
         toneMapped: false,
         transparent: true,
-        opacity: 0.94,
         blending: AdditiveBlending,
         depthWrite: false,
     });
@@ -172,23 +258,18 @@ function createNodeMesh() {
 }
 
 function createEdges() {
-    const positions: number[] = [];
-    const colors: number[] = [];
-    const color = new Color();
-    for (const node of props.graph.nodes) {
-        if (!node.parentId) continue;
-        const parent = props.graph.get(node.parentId);
-        if (!parent) continue;
-        positions.push(parent.x, parent.y, parent.z, node.x, node.y, node.z);
-        color.set(parent.color);
-        colors.push(color.r, color.g, color.b);
-        color.set(node.color);
-        colors.push(color.r, color.g, color.b);
-    }
+    const positions = new Float32Array(hierarchyEdgeBuffer.capacity * 6);
+    const colors = new Float32Array(hierarchyEdgeBuffer.capacity * 6);
     const geometry = new BufferGeometry();
-    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-    geometry.userData.baseColors = new Float32Array(colors);
+    geometry.setAttribute(
+        "position",
+        new Float32BufferAttribute(positions, 3).setUsage(DynamicDrawUsage)
+    );
+    geometry.setAttribute(
+        "color",
+        new Float32BufferAttribute(colors, 3).setUsage(DynamicDrawUsage)
+    );
+    geometry.setDrawRange(0, 0);
     const lines = new LineSegments(
         geometry,
         new LineBasicMaterial({
@@ -211,19 +292,26 @@ function updateEdges(now: number) {
     const colorAttribute = hierarchyEdges.geometry.getAttribute("color") as Float32BufferAttribute;
     const posArray = positionAttribute.array as Float32Array;
     const colArray = colorAttribute.array as Float32Array;
-    const baseColors = hierarchyEdges.geometry.userData.baseColors as Float32Array;
+    hierarchyEdgeBuffer.update(props.graph.nodes, props.activeOnly);
+    hierarchyEdges.geometry.setDrawRange(0, hierarchyEdgeBuffer.count * 2);
 
     let offset = 0;
-    let colOffset = 0;
+    for (let edgeIndex = 0; edgeIndex < hierarchyEdgeBuffer.count; edgeIndex += 1) {
+        const nodeIndex = hierarchyEdgeBuffer.nodeIndices[edgeIndex] ?? -1;
+        const parentIndex = hierarchyEdgeBuffer.parentIndices[nodeIndex] ?? -1;
+        const node = props.graph.nodes[nodeIndex];
+        const parent = props.graph.nodes[parentIndex];
+        if (!node || !parent) continue;
 
-    for (const node of props.graph.nodes) {
-        if (!node.parentId) continue;
-        const parent = props.graph.get(node.parentId);
-        if (!parent) continue;
-
+        const alphaScale = isGrandRootEdge(node) ? 0.26 : 1;
+        const activityScale = props.activeOnly
+            ? 0.3 + Math.sqrt(hierarchyEdgeBuffer.activity[edgeIndex] ?? 0) * 0.7
+            : 1;
         const alpha =
             Math.min(parent.visibilityAlpha, node.visibilityAlpha) *
-            Math.min(parent.emphasis, node.emphasis);
+            Math.min(parent.emphasis, node.emphasis) *
+            alphaScale *
+            activityScale;
 
         const wxParent = Math.sin(now * 0.0008 + parent.index * 1.2) * 1.5;
         const wyParent = Math.cos(now * 0.0009 + parent.index * 0.8) * 1.5;
@@ -240,33 +328,58 @@ function updateEdges(now: number) {
         posArray[offset++] = node.y + wyNode;
         posArray[offset++] = node.z + wzNode;
 
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
+        const baseOffset = nodeIndex * 6;
+        const colorOffset = edgeIndex * 6;
+        for (let component = 0; component < 6; component += 1) {
+            colArray[colorOffset + component] =
+                (hierarchyEdgeBaseColors[baseOffset + component] ?? 0) * alpha;
+        }
     }
     positionAttribute.needsUpdate = true;
     colorAttribute.needsUpdate = true;
 }
 
+type HierarchyEdgeNode = ChannelGraph["nodes"][number] & { parentId: string };
+
+function hasHierarchyEdge(node: ChannelGraph["nodes"][number]): node is HierarchyEdgeNode {
+    return node.parentId !== null;
+}
+
+function isGrandRootEdge(node: ChannelGraph["nodes"][number]) {
+    return node.parentId === "grand_root";
+}
+
+function createEdgeBaseColors() {
+    const colors = new Float32Array(props.graph.nodes.length * 6);
+    const color = new Color();
+    for (const node of props.graph.nodes) {
+        if (!hasHierarchyEdge(node)) continue;
+        const parentIndex = hierarchyEdgeBuffer.parentIndices[node.index] ?? -1;
+        const parent = props.graph.nodes[parentIndex];
+        if (!parent) continue;
+        const offset = node.index * 6;
+        color.set(isGrandRootEdge(node) ? rootEdgeColor : parent.color);
+        colors[offset] = color.r;
+        colors[offset + 1] = color.g;
+        colors[offset + 2] = color.b;
+        color.set(isGrandRootEdge(node) ? rootEdgeColor : node.color);
+        colors[offset + 3] = color.r;
+        colors[offset + 4] = color.g;
+        colors[offset + 5] = color.b;
+    }
+    return colors;
+}
+
 function createSelectionPath() {
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new Float32BufferAttribute([], 3));
+    geometry.setAttribute("color", new Float32BufferAttribute([], 3));
     const line = new Line(
         geometry,
         new LineBasicMaterial({
-            color: 0xffffff,
+            vertexColors: true,
             transparent: true,
-            opacity: 0.82,
+            opacity: selectionPathOpacity,
             blending: AdditiveBlending,
             depthWrite: false,
             toneMapped: false,
@@ -290,10 +403,24 @@ function draw(now: number) {
     nodes.instanceMatrix.needsUpdate = true;
     updateEdges(now);
     updateSelectionPathPositions(now);
-    if (hierarchyEdges) hierarchyEdges.visible = !props.activeOnly;
-    updateCameraTransition(now);
-    controls?.update();
+    updateKeyboardCameraMotion(delta);
+    cameraController?.updateTransition(props.graph, now);
+    updateIdleAutoRotation(now, delta);
+    const timeUniform = nodes.material.uniforms.uTime;
+    if (timeUniform) timeUniform.value = now * 0.001;
+    if (!customRotationActive) controls?.update();
+    constrainRotationCenterToViewport();
+    updateHoverCursor();
     composer.render();
+}
+
+function updateIdleAutoRotation(now: number, delta: number) {
+    if (customRotationActive || now - lastCameraInteractionAt < idleAutoRotationDelay) return;
+    const element = renderer?.domElement;
+    if (!element) return;
+    const rotationScale = (Math.PI * 2) / Math.max(1, element.clientHeight);
+    const deltaX = -(idleAutoRotationRadiansPerSecond * delta) / rotationScale;
+    rotateAroundSelectedNode(deltaX, 0);
 }
 
 function updateSelectionPathPositions(now: number) {
@@ -326,194 +453,201 @@ function resize() {
     const height = element.clientHeight;
     camera.aspect = width / Math.max(1, height);
     camera.updateProjectionMatrix();
-    renderer.setSize(width, height, false);
+    renderer.setSize(width, height);
     composer.setSize(width, height);
 }
 
+function noteCameraInteraction() {
+    lastCameraInteractionAt = performance.now();
+}
+
+function setCameraMoveActive(direction: CameraMoveDirection, active: boolean) {
+    setActiveDirection(activeCameraMoveDirections, direction, active);
+}
+
+function setCameraZoomActive(direction: CameraZoomDirection, active: boolean) {
+    setActiveDirection(activeCameraZoomDirections, direction, active);
+}
+
+function setCameraRotationActive(direction: CameraRotationDirection, active: boolean) {
+    setActiveDirection(activeCameraRotationDirections, direction, active);
+}
+
+function releaseCameraControls() {
+    activeCameraMoveDirections.clear();
+    activeCameraZoomDirections.clear();
+    activeCameraRotationDirections.clear();
+    resetKeyboardCameraMotion();
+}
+
+function setActiveDirection<T>(directions: Set<T>, direction: T, active: boolean) {
+    if (active) directions.add(direction);
+    else directions.delete(direction);
+}
+
+function updateKeyboardCameraMotion(delta: number) {
+    const element = renderer?.domElement;
+    if (!element || !cameraController) return;
+
+    const panInput = cameraMoveInput();
+    const rotationInput = cameraRotationInput();
+    const zoomInput = cameraZoomInput();
+    const hasInput = panInput.lengthSq() > 0 || rotationInput.lengthSq() > 0 || zoomInput !== 0;
+
+    if (!hasInput && !hasKeyboardCameraMotion()) return;
+    if (hasInput) cameraController.cancelTransition();
+
+    keyboardPanVelocity.set(
+        updateKeyboardVelocity(
+            keyboardPanVelocity.x,
+            panInput.x,
+            keyboardPanAcceleration,
+            keyboardPanMaxSpeed,
+            keyboardPanDamping,
+            delta
+        ),
+        updateKeyboardVelocity(
+            keyboardPanVelocity.y,
+            panInput.y,
+            keyboardPanAcceleration,
+            keyboardPanMaxSpeed,
+            keyboardPanDamping,
+            delta
+        )
+    );
+    keyboardRotationVelocity.set(
+        updateKeyboardVelocity(
+            keyboardRotationVelocity.x,
+            rotationInput.x,
+            keyboardRotationAcceleration,
+            keyboardRotationMaxSpeed,
+            keyboardRotationDamping,
+            delta
+        ),
+        updateKeyboardVelocity(
+            keyboardRotationVelocity.y,
+            rotationInput.y,
+            keyboardRotationAcceleration,
+            keyboardRotationMaxSpeed,
+            keyboardRotationDamping,
+            delta
+        )
+    );
+    keyboardZoomVelocity = updateKeyboardVelocity(
+        keyboardZoomVelocity,
+        zoomInput,
+        keyboardZoomAcceleration,
+        keyboardZoomMaxSpeed,
+        keyboardZoomDamping,
+        delta
+    );
+
+    if (!hasKeyboardCameraMotion()) return;
+
+    noteCameraInteraction();
+    if (keyboardPanVelocity.lengthSq() > 0) {
+        cameraController.moveInView(
+            keyboardPanVelocity.x * delta,
+            keyboardPanVelocity.y * delta,
+            element.clientHeight
+        );
+    }
+    if (Math.abs(keyboardZoomVelocity) > 0) {
+        cameraController.zoomBy(Math.exp(-keyboardZoomVelocity * delta));
+    }
+    if (keyboardRotationVelocity.lengthSq() > 0) {
+        rotateAroundSelectedNode(
+            keyboardRotationVelocity.x * delta,
+            keyboardRotationVelocity.y * delta
+        );
+    }
+}
+
+function cameraMoveInput() {
+    keyboardPanInput.set(
+        directionAxis(activeCameraMoveDirections, "left", "right"),
+        directionAxis(activeCameraMoveDirections, "up", "down")
+    );
+    return normalizeKeyboardInput(keyboardPanInput);
+}
+
+function cameraRotationInput() {
+    keyboardRotationInput.set(
+        directionAxis(activeCameraRotationDirections, "left", "right"),
+        directionAxis(activeCameraRotationDirections, "up", "down")
+    );
+    return normalizeKeyboardInput(keyboardRotationInput);
+}
+
+function cameraZoomInput() {
+    return (
+        Number(activeCameraZoomDirections.has("in")) - Number(activeCameraZoomDirections.has("out"))
+    );
+}
+
+function directionAxis<T>(directions: Set<T>, negative: T, positive: T) {
+    return Number(directions.has(positive)) - Number(directions.has(negative));
+}
+
+function normalizeKeyboardInput(input: Vector2) {
+    const length = input.length();
+    if (length > 1) input.multiplyScalar(1 / length);
+    return input;
+}
+
+function updateKeyboardVelocity(
+    current: number,
+    input: number,
+    acceleration: number,
+    maxSpeed: number,
+    damping: number,
+    delta: number
+) {
+    if (input !== 0) {
+        return clamp(current + input * acceleration * delta, -maxSpeed, maxSpeed);
+    }
+
+    const next = current * Math.exp(-damping * delta);
+    return Math.abs(next) < keyboardMotionEpsilon ? 0 : next;
+}
+
+function hasKeyboardCameraMotion() {
+    return (
+        keyboardPanVelocity.lengthSq() > keyboardMotionEpsilon ** 2 ||
+        keyboardRotationVelocity.lengthSq() > keyboardMotionEpsilon ** 2 ||
+        Math.abs(keyboardZoomVelocity) > keyboardMotionEpsilon
+    );
+}
+
+function resetKeyboardCameraMotion() {
+    keyboardPanVelocity.set(0, 0);
+    keyboardRotationVelocity.set(0, 0);
+    keyboardZoomVelocity = 0;
+}
+
+function clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
+}
+
 function onPointerDown(event: PointerEvent) {
-    cameraTransition = undefined;
+    if (props.focusId) cameraController?.cancelTransition();
     pointerDown.set(event.clientX, event.clientY);
+    pointerLast.copy(pointerDown);
     pointerMoved = false;
+    pointerButton = event.button;
+    customRotationActive = false;
+    if (event.button === 0) renderer?.domElement.setPointerCapture(event.pointerId);
+}
+
+function centerInitialCamera() {
+    const root = props.graph.get("grand_root");
+    if (!root) return;
+    cameraController?.centerAt(root);
 }
 
 function updateCameraTarget(id: string | undefined) {
-    if (!camera || !controls) return;
-
-    if (!id) {
-        const direction = camera.position.clone().sub(controls.target);
-        if (direction.lengthSq() < 0.001) direction.set(0, 0, 1);
-        direction.normalize();
-        cameraTransition = {
-            startedAt: performance.now(),
-            startPosition: camera.position.clone(),
-            startTarget: controls.target.clone(),
-            direction,
-            distance: 800,
-            positionOffset: new Vector3(),
-            framingNodeIds: [],
-            nodeId: "grand_root",
-        };
-        return;
-    }
-
-    const node = props.graph.get(id);
-    if (!node) return;
-    const direction = camera.position.clone().sub(controls.target);
-    if (direction.lengthSq() < 0.001) direction.set(0, 0, 1);
-    direction.normalize();
-
-    let descendantsCount = 0;
-    const framingNodes = new Map<string, ChannelGraph["nodes"][number]>();
-    framingNodes.set(node.id, node);
-    const countTraverse = (index: number, level: number) => {
-        if (level > 2) return;
-        const descendant = props.graph.nodes[index];
-        if (!descendant) return;
-        framingNodes.set(descendant.id, descendant);
-        descendantsCount += 1;
-        for (const childIndex of descendant.children) countTraverse(childIndex, level + 1);
-    };
-    for (const childIndex of node.children) countTraverse(childIndex, 1);
-
-    const estimatedRadius = Math.max(30, Math.sqrt(descendantsCount) * 16);
-    const requiredDistance = estimatedRadius * 2.8 + 120;
-    const target = new Vector3(node.targetX, node.targetY, node.targetZ);
-    const currentDistance = camera.position.distanceTo(controls.target);
-    const framingNodeIds = [...framingNodes.keys()];
-    const minimumDistance = Math.max(requiredDistance, currentDistance * 0.7);
-    let distance = calculateFocusDistance(node, direction, framingNodeIds, minimumDistance);
-    const basePosition = target.clone().addScaledVector(direction, distance);
-    const pathIds = new Set(props.graph.path(id).map(pathNode => pathNode.id));
-    const obstacles = props.graph.nodes
-        .filter(
-            candidate =>
-                !pathIds.has(candidate.id) &&
-                candidate.visibilityAlpha > 0.15 &&
-                candidate.isLayoutActive
-        )
-        .map(candidate => ({
-            position: {
-                x: candidate.targetX,
-                y: candidate.targetY,
-                z: candidate.targetZ,
-            },
-            radius: cameraObstacleRadius(candidate),
-        }))
-        .filter(obstacle => obstacle.radius >= 4.5);
-    const offset = calculatePathAvoidance(
-        basePosition,
-        props.graph.path(id).map(pathNode => ({
-            x: pathNode.targetX,
-            y: pathNode.targetY,
-            z: pathNode.targetZ,
-        })),
-        obstacles
-    );
-    const positionOffset = new Vector3(offset.x, offset.y, offset.z);
-    distance = calculateFocusDistance(node, direction, framingNodeIds, distance, positionOffset);
-
-    cameraTransition = {
-        startedAt: performance.now(),
-        startPosition: camera.position.clone(),
-        startTarget: controls.target.clone(),
-        direction,
-        distance,
-        positionOffset,
-        framingNodeIds,
-        nodeId: id,
-    };
-}
-
-function cameraObstacleRadius(node: ChannelGraph["nodes"][number]) {
-    const heat = node.relativeScore;
-    const baseScale =
-        node.id === "grand_root"
-            ? 4.2
-            : node.depth <= 1
-              ? 3
-              : Math.max(0.42, 2.4 * 0.72 ** (node.depth - 1));
-    return (baseScale + heat * 6) * node.emphasis * node.visibilityAlpha;
-}
-
-function nodeFramePoint(node: ChannelGraph["nodes"][number]): CameraFramePoint {
-    return {
-        position: {
-            x: node.targetX,
-            y: node.targetY,
-            z: node.targetZ,
-        },
-        radius: Math.max(10, cameraObstacleRadius(node) * 2.6),
-    };
-}
-
-function calculateFocusDistance(
-    node: ChannelGraph["nodes"][number],
-    direction: Vector3,
-    framingNodeIds: readonly string[],
-    minimumDistance: number,
-    positionOffset?: Vector3
-) {
-    if (!camera || !controls) return minimumDistance;
-    const framePoints = framingNodeIds
-        .map(nodeId => props.graph.get(nodeId))
-        .filter(
-            (framingNode): framingNode is ChannelGraph["nodes"][number] =>
-                Boolean(framingNode) &&
-                (framingNode.visibilityAlpha > 0.05 || framingNode.id === node.id)
-        )
-        .map(nodeFramePoint);
-    let framedDistance = calculateFramedCameraDistance(
-        { x: node.targetX, y: node.targetY, z: node.targetZ },
-        framePoints,
-        {
-            cameraDirection: direction,
-            verticalFovDegrees: camera.fov,
-            aspect: camera.aspect,
-            minimumDistance,
-        }
-    );
-    if (positionOffset && positionOffset.lengthSq() > 0.001) {
-        const shiftedDirection = direction
-            .clone()
-            .multiplyScalar(framedDistance)
-            .add(positionOffset)
-            .normalize();
-        framedDistance = calculateFramedCameraDistance(
-            { x: node.targetX, y: node.targetY, z: node.targetZ },
-            framePoints,
-            {
-                cameraDirection: shiftedDirection,
-                verticalFovDegrees: camera.fov,
-                aspect: camera.aspect,
-                minimumDistance: framedDistance,
-            }
-        );
-    }
-
-    if (framedDistance > controls.maxDistance) controls.maxDistance = framedDistance;
-    if (framedDistance * 1.2 > camera.far) {
-        camera.far = framedDistance * 1.2;
-        camera.updateProjectionMatrix();
-    }
-    return framedDistance;
-}
-
-function calculatePathAvoidance(
-    cameraPosition: { x: number; y: number; z: number },
-    path: readonly { x: number; y: number; z: number }[],
-    obstacles: Parameters<typeof calculateCameraAvoidance>[2]
-) {
-    let strongest = { x: 0, y: 0, z: 0 };
-    let strongestLength = 0;
-    for (const pathNode of path) {
-        const offset = calculateCameraAvoidance(cameraPosition, pathNode, obstacles);
-        const length = Math.hypot(offset.x, offset.y, offset.z);
-        if (length > strongestLength) {
-            strongest = offset;
-            strongestLength = length;
-        }
-    }
-    return strongest;
+    resetKeyboardCameraMotion();
+    cameraController?.focus(props.graph, id);
 }
 
 function updateSelectionPath(id: string | undefined) {
@@ -528,52 +662,93 @@ function updateSelectionPath(id: string | undefined) {
     }
     const positions = path.flatMap(node => [node.x, node.y, node.z]);
     selectionPath.geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    selectionPath.geometry.setAttribute(
+        "color",
+        new Float32BufferAttribute(selectionPathColors(path), 3)
+    );
     selectionPath.geometry.computeBoundingSphere();
-    selectionPath.material.color.set(path.at(-1)?.color ?? "#ffffff");
     selectionPath.visible = true;
 }
 
-function updateCameraTransition(now: number) {
-    if (!cameraTransition || !camera || !controls) return;
-    const progress = Math.min(1, (now - cameraTransition.startedAt) / 720);
-    const eased = 1 - (1 - progress) ** 3;
-
-    const node = props.graph.get(cameraTransition.nodeId);
-    if (!node) {
-        cameraTransition = undefined;
-        return;
-    }
-
-    const target = new Vector3(node.targetX, node.targetY, node.targetZ);
-    const distance = calculateFocusDistance(
-        node,
-        cameraTransition.direction,
-        cameraTransition.framingNodeIds,
-        cameraTransition.distance,
-        cameraTransition.positionOffset
+function selectionPathColors(path: ChannelGraph["nodes"][number][]) {
+    const colors: number[] = [];
+    const selectedColor = new Color(path.at(-1)?.color ?? "#ffffff");
+    const rootColor = new Color(rootEdgeColor).multiplyScalar(
+        rootEdgeVisualOpacity / selectionPathOpacity
     );
-    const position = target
-        .clone()
-        .addScaledVector(cameraTransition.direction, distance)
-        .add(cameraTransition.positionOffset);
-
-    camera.position.lerpVectors(cameraTransition.startPosition, position, eased);
-    controls.target.lerpVectors(cameraTransition.startTarget, target, eased);
-
-    if (progress >= 1) cameraTransition = undefined;
+    for (const [index, node] of path.entries()) {
+        const color = index === 0 && node.id === "grand_root" ? rootColor : selectedColor;
+        colors.push(color.r, color.g, color.b);
+    }
+    return colors;
 }
 
 function onPointerMove(event: PointerEvent) {
+    const deltaX = event.clientX - pointerLast.x;
+    const deltaY = event.clientY - pointerLast.y;
+    pointerLast.set(event.clientX, event.clientY);
+
     if (Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 8) {
         pointerMoved = true;
     }
+    if (pointerMoved && pointerButton === 0) {
+        customRotationActive = true;
+        rotateAroundSelectedNode(deltaX, deltaY);
+    }
+    if (event.buttons === 0) {
+        hoverPointer.set(event.clientX, event.clientY);
+        hoverPending = true;
+    }
+}
+
+function rotateAroundSelectedNode(deltaX: number, deltaY: number) {
+    const element = renderer?.domElement;
+    if (!element) return;
+    const pivotNode = props.focusId
+        ? props.graph.get(props.focusId)
+        : props.graph.get("grand_root");
+    if (!pivotNode) return;
+    cameraController?.rotateAround(pivotNode, deltaX, deltaY, element.clientHeight);
+}
+
+function constrainRotationCenterToViewport() {
+    if (props.focusId) {
+        const pivotNode = props.graph.get(props.focusId);
+        if (pivotNode) cameraController?.constrainPivotToViewport(pivotNode);
+        return;
+    }
+    cameraController?.constrainPointsToViewport(props.graph.nodes.filter(isNodeRendered));
 }
 
 function onPointerUp(event: PointerEvent) {
+    if (event.button === 0 && renderer?.domElement.hasPointerCapture(event.pointerId)) {
+        renderer.domElement.releasePointerCapture(event.pointerId);
+    }
+    pointerButton = -1;
+    customRotationActive = false;
+    controls?.update();
+    hoverPointer.set(event.clientX, event.clientY);
+    hoverPending = true;
     if (pointerMoved || !renderer || !camera || !nodes) return;
     const bounds = renderer.domElement.getBoundingClientRect();
     const pickedId = pickNodeAt(event.clientX - bounds.left, event.clientY - bounds.top, bounds);
-    emit("select", pickedId === props.selectedId ? undefined : pickedId);
+
+    if (pickedId === props.selectedId) return;
+
+    emit("select", pickedId);
+}
+
+function onPointerLeave() {
+    hoverPending = false;
+    renderer?.domElement.classList.remove("pickable");
+}
+
+function updateHoverCursor() {
+    if (!hoverPending || !renderer || !camera || !nodes) return;
+    hoverPending = false;
+    const bounds = renderer.domElement.getBoundingClientRect();
+    const hoveredId = pickNodeAt(hoverPointer.x - bounds.left, hoverPointer.y - bounds.top, bounds);
+    renderer.domElement.classList.toggle("pickable", hoveredId !== undefined);
 }
 
 function pickNodeAt(x: number, y: number, bounds: DOMRect) {
@@ -585,22 +760,13 @@ function pickNodeAt(x: number, y: number, bounds: DOMRect) {
     }[] = [];
 
     for (const node of props.graph.nodes) {
-        if (node.visibilityAlpha < 0.05) continue;
-
-        if (
-            props.activeOnly &&
-            node.relativeScore <= 0.08 &&
-            node.id !== "grand_root" &&
-            node.id !== props.selectedId
-        ) {
-            continue;
-        }
+        if (!isNodeRendered(node)) continue;
         projectedNode.set(node.x, node.y, node.z).project(camera!);
         if (projectedNode.z < -1 || projectedNode.z > 1) continue;
         const screenX = ((projectedNode.x + 1) / 2) * bounds.width;
         const screenY = ((1 - projectedNode.y) / 2) * bounds.height;
         const distance = Math.hypot(screenX - x, screenY - y);
-        if (distance <= 28) {
+        if (distance <= NODE_PICK_RADIUS) {
             candidates.push({
                 id: node.id,
                 distance,
@@ -622,6 +788,17 @@ function pickNodeAt(x: number, y: number, bounds: DOMRect) {
     return nearby[0]?.id;
 }
 
+function isNodeRendered(node: ChannelGraph["nodes"][number]) {
+    if (node.visibilityAlpha < 0.05) return false;
+    return (
+        !props.activeOnly ||
+        node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD ||
+        node.activeDescendantScore > 0 ||
+        node.id === "grand_root" ||
+        node.id === props.selectedId
+    );
+}
+
 function onContextLost(event: Event) {
     event.preventDefault();
     cancelAnimationFrame(frame);
@@ -636,17 +813,20 @@ function dispose() {
     cancelAnimationFrame(frame);
     resizeObserver?.disconnect();
     document.removeEventListener("visibilitychange", resetFrameClock);
+    window.removeEventListener("keydown", noteCameraInteraction);
+    window.removeEventListener("mousedown", noteCameraInteraction);
     const canvas = renderer?.domElement;
     canvas?.removeEventListener("pointerdown", onPointerDown);
     canvas?.removeEventListener("pointermove", onPointerMove);
     canvas?.removeEventListener("pointerup", onPointerUp);
+    canvas?.removeEventListener("pointerleave", onPointerLeave);
     canvas?.removeEventListener("webglcontextlost", onContextLost);
     controls?.dispose();
     effects?.dispose();
     effects = undefined;
     hierarchyEdges = undefined;
     selectionPath = undefined;
-    cameraTransition = undefined;
+    cameraController = undefined;
     composer?.dispose();
     composer = undefined;
     scene?.traverse(object => {
@@ -658,6 +838,7 @@ function dispose() {
             if (Array.isArray(material)) material.forEach(item => item.dispose());
             else if (
                 material instanceof MeshBasicMaterial ||
+                material instanceof ShaderMaterial ||
                 material instanceof LineBasicMaterial
             ) {
                 material.dispose();
@@ -673,6 +854,8 @@ watch(
     () => {
         dispose();
         nodeBuffer = new NodeBuffer(props.graph.nodes.length);
+        hierarchyEdgeBuffer = new HierarchyEdgeBuffer(props.graph.nodes);
+        hierarchyEdgeBaseColors = createEdgeBaseColors();
         initialise();
     }
 );
@@ -686,8 +869,8 @@ watch(
 );
 
 watch(
-    () => props.focusId,
-    id => {
+    () => [props.focusId, props.focusRevision] as const,
+    ([id]) => {
         updateCameraTarget(id);
     },
     { immediate: true }
@@ -695,6 +878,13 @@ watch(
 
 onMounted(initialise);
 onBeforeUnmount(dispose);
+
+defineExpose({
+    setCameraMoveActive,
+    setCameraZoomActive,
+    setCameraRotationActive,
+    releaseCameraControls,
+});
 </script>
 
 <template>
@@ -716,6 +906,10 @@ onBeforeUnmount(dispose);
 .galaxy :deep(canvas) {
     display: block;
     cursor: grab;
+}
+
+.galaxy :deep(canvas.pickable) {
+    cursor: pointer;
 }
 
 .galaxy :deep(canvas:active) {

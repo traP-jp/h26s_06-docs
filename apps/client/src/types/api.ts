@@ -5,13 +5,14 @@ export interface InitChannel {
     children: string[];
     islandId?: number;
     depth?: number;
+    score?: number;
 }
 
 export type ChannelDictionary = Record<string, InitChannel>;
 
 export type TriggerPayload =
-    | { type: "msg"; ch: string }
-    | { type: "mov"; usr?: string; from?: string; to: string };
+    | { type: "msg"; ch: string; delta?: number }
+    | { type: "mov"; usr?: string; from?: string; to: string; delta?: number };
 
 export interface SyncPayload {
     ts: number;
