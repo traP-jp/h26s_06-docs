@@ -2,20 +2,12 @@
 import { onBeforeUnmount, onMounted, useTemplateRef, watch } from "vue";
 
 import {
-    AdditiveBlending,
     BufferGeometry,
-    Color,
-    DynamicDrawUsage,
-    Float32BufferAttribute,
-    InstancedMesh,
-    Line,
     LineBasicMaterial,
-    LineSegments,
     MeshBasicMaterial,
     PerspectiveCamera,
     SRGBColorSpace,
     Scene,
-    SphereGeometry,
     Vector2,
     Vector3,
     WebGLRenderer,
@@ -29,6 +21,16 @@ import { calculateCameraAvoidance } from "../core/cameraAvoidance";
 import type { ChannelGraph } from "../core/channelGraph";
 import { NodeBuffer } from "../core/nodeBuffer";
 import { EffectPool } from "../rendering/effectPool";
+import {
+    createHierarchyEdges,
+    createNodeMesh,
+    createSelectionPath,
+    setSelectionPath,
+    updateNodeMeshMatrix,
+    updateHierarchyEdges as updateRenderedHierarchyEdges,
+    updateSelectionPathPositions as updateRenderedSelectionPathPositions,
+} from "../rendering/sceneObjects";
+import type { HierarchyEdges, NodeMesh, SelectionPath } from "../rendering/sceneObjects";
 
 const props = defineProps<{
     graph: ChannelGraph;
@@ -48,9 +50,9 @@ let camera: PerspectiveCamera | undefined;
 let controls: OrbitControls | undefined;
 let composer: EffectComposer | undefined;
 let effects: EffectPool | undefined;
-let nodes: InstancedMesh | undefined;
-let hierarchyEdges: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
-let selectionPath: Line<BufferGeometry, LineBasicMaterial> | undefined;
+let nodes: NodeMesh | undefined;
+let hierarchyEdges: HierarchyEdges | undefined;
+let selectionPath: SelectionPath | undefined;
 let cameraTransition:
     | {
           startedAt: number;
@@ -69,7 +71,6 @@ let pointerMoved = false;
 let resizeObserver: ResizeObserver | undefined;
 let nodeBuffer = new NodeBuffer(props.graph.nodes.length);
 const projectedNode = new Vector3();
-const instanceColor = new Color();
 
 function initialise() {
     const element = host.value;
@@ -102,9 +103,9 @@ function initialise() {
         controls.minDistance = 80;
         controls.maxDistance = Math.max(1400, initialDistance * 2.5);
 
-        nodes = createNodeMesh();
+        nodes = createNodeMesh(props.graph, nodeBuffer, props.selectedId, props.activeOnly);
         scene.add(nodes);
-        hierarchyEdges = createEdges();
+        hierarchyEdges = createHierarchyEdges(props.graph);
         scene.add(hierarchyEdges);
         selectionPath = createSelectionPath();
         scene.add(selectionPath);
@@ -137,139 +138,9 @@ function initialise() {
     }
 }
 
-function createNodeMesh() {
-    const geometry = new SphereGeometry(1, 10, 8);
-    const material = new MeshBasicMaterial({
-        color: 0xffffff,
-        toneMapped: false,
-        transparent: true,
-        opacity: 0.94,
-        blending: AdditiveBlending,
-        depthWrite: false,
-    });
-    const mesh = new InstancedMesh(geometry, material, props.graph.nodes.length);
-    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-    nodeBuffer.update(props.graph.nodes, performance.now(), props.selectedId, props.activeOnly);
-    (mesh.instanceMatrix.array as Float32Array).set(nodeBuffer.matrixData);
-    for (let index = 0; index < props.graph.nodes.length; index += 1) {
-        const offset = index * 3;
-        instanceColor.setRGB(
-            nodeBuffer.colorData[offset] ?? 1,
-            nodeBuffer.colorData[offset + 1] ?? 1,
-            nodeBuffer.colorData[offset + 2] ?? 1
-        );
-        mesh.setColorAt(index, instanceColor);
-    }
-    mesh.instanceColor?.setUsage(DynamicDrawUsage);
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.frustumCulled = false;
-    return mesh;
-}
-
-function createEdges() {
-    const positions: number[] = [];
-    const colors: number[] = [];
-    const color = new Color();
-    for (const node of props.graph.nodes) {
-        if (!node.parentId) continue;
-        const parent = props.graph.get(node.parentId);
-        if (!parent) continue;
-        positions.push(parent.x, parent.y, parent.z, node.x, node.y, node.z);
-        color.set(parent.color);
-        colors.push(color.r, color.g, color.b);
-        color.set(node.color);
-        colors.push(color.r, color.g, color.b);
-    }
-    const geometry = new BufferGeometry();
-    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-    geometry.userData.baseColors = new Float32Array(colors);
-    const lines = new LineSegments(
-        geometry,
-        new LineBasicMaterial({
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.24,
-            blending: AdditiveBlending,
-            depthWrite: false,
-        })
-    );
-    lines.frustumCulled = false;
-    return lines;
-}
-
 function updateEdges(now: number) {
     if (!hierarchyEdges) return;
-    const positionAttribute = hierarchyEdges.geometry.getAttribute(
-        "position"
-    ) as Float32BufferAttribute;
-    const colorAttribute = hierarchyEdges.geometry.getAttribute("color") as Float32BufferAttribute;
-    const posArray = positionAttribute.array as Float32Array;
-    const colArray = colorAttribute.array as Float32Array;
-    const baseColors = hierarchyEdges.geometry.userData.baseColors as Float32Array;
-
-    let offset = 0;
-    let colOffset = 0;
-
-    for (const node of props.graph.nodes) {
-        if (!node.parentId) continue;
-        const parent = props.graph.get(node.parentId);
-        if (!parent) continue;
-
-        const alpha =
-            Math.min(parent.visibilityAlpha, node.visibilityAlpha) *
-            Math.min(parent.emphasis, node.emphasis);
-
-        const wxParent = Math.sin(now * 0.0008 + parent.index * 1.2) * 1.5;
-        const wyParent = Math.cos(now * 0.0009 + parent.index * 0.8) * 1.5;
-        const wzParent = Math.sin(now * 0.0007 + parent.index * 1.5) * 1.5;
-
-        const wxNode = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
-        const wyNode = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
-        const wzNode = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
-
-        posArray[offset++] = parent.x + wxParent;
-        posArray[offset++] = parent.y + wyParent;
-        posArray[offset++] = parent.z + wzParent;
-        posArray[offset++] = node.x + wxNode;
-        posArray[offset++] = node.y + wyNode;
-        posArray[offset++] = node.z + wzNode;
-
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-    }
-    positionAttribute.needsUpdate = true;
-    colorAttribute.needsUpdate = true;
-}
-
-function createSelectionPath() {
-    const geometry = new BufferGeometry();
-    geometry.setAttribute("position", new Float32BufferAttribute([], 3));
-    const line = new Line(
-        geometry,
-        new LineBasicMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.82,
-            blending: AdditiveBlending,
-            depthWrite: false,
-            toneMapped: false,
-        })
-    );
-    line.visible = false;
-    line.frustumCulled = false;
-    return line;
+    updateRenderedHierarchyEdges(hierarchyEdges, props.graph, now);
 }
 
 function draw(now: number) {
@@ -281,8 +152,7 @@ function draw(now: number) {
     for (const event of props.graph.takeVisualEvents()) effects?.play(event, now);
     effects?.update(now);
     nodeBuffer.update(props.graph.nodes, now, props.selectedId, props.activeOnly);
-    (nodes.instanceMatrix.array as Float32Array).set(nodeBuffer.matrixData);
-    nodes.instanceMatrix.needsUpdate = true;
+    updateNodeMeshMatrix(nodes, nodeBuffer);
     updateEdges(now);
     updateSelectionPathPositions(now);
     if (hierarchyEdges) hierarchyEdges.visible = !props.activeOnly;
@@ -292,26 +162,8 @@ function draw(now: number) {
 }
 
 function updateSelectionPathPositions(now: number) {
-    if (!selectionPath || !selectionPath.visible || !props.selectedId) return;
-    const path = props.graph.path(props.selectedId);
-    if (path.length < 2) return;
-
-    const positionAttribute = selectionPath.geometry.getAttribute(
-        "position"
-    ) as Float32BufferAttribute;
-    const posArray = positionAttribute.array as Float32Array;
-    let offset = 0;
-
-    for (const node of path) {
-        const wxNode = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
-        const wyNode = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
-        const wzNode = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
-
-        posArray[offset++] = node.x + wxNode;
-        posArray[offset++] = node.y + wyNode;
-        posArray[offset++] = node.z + wzNode;
-    }
-    positionAttribute.needsUpdate = true;
+    if (!selectionPath) return;
+    updateRenderedSelectionPathPositions(selectionPath, props.graph, props.selectedId, now);
 }
 
 function resize() {
@@ -439,20 +291,8 @@ function calculatePathAvoidance(
 }
 
 function updateSelectionPath(id: string | undefined) {
-    if (!selectionPath || !id) {
-        if (selectionPath) selectionPath.visible = false;
-        return;
-    }
-    const path = props.graph.path(id);
-    if (path.length < 2) {
-        selectionPath.visible = false;
-        return;
-    }
-    const positions = path.flatMap(node => [node.x, node.y, node.z]);
-    selectionPath.geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-    selectionPath.geometry.computeBoundingSphere();
-    selectionPath.material.color.set(path.at(-1)?.color ?? "#ffffff");
-    selectionPath.visible = true;
+    if (!selectionPath) return;
+    setSelectionPath(selectionPath, props.graph, id);
 }
 
 function updateCameraTransition(now: number) {
