@@ -110,7 +110,7 @@ func (s *server) streamViewerSnapshots(ctx context.Context, accessToken string, 
 	return out
 }
 
-func (s *server) streamCurrentViewerEvents(ctx context.Context, accessToken string, userID string, state *stateManager, activeChannelIDs map[string]bool) <-chan sseEvent {
+func (s *server) streamCurrentViewerEvents(ctx context.Context, userID string, state *stateManager, activeChannelIDs map[string]bool) <-chan sseEvent {
 	out := make(chan sseEvent, clientEventQueueSize)
 	var signals <-chan viewerSignal
 	if s.viewerHub != nil {
@@ -122,21 +122,21 @@ func (s *server) streamCurrentViewerEvents(ctx context.Context, accessToken stri
 		go func() {
 			defer close(out)
 			defer deferUnsubscribe()
-			s.runCurrentViewerEvents(ctx, out, signals, accessToken, userID, state, activeChannelIDs)
+			s.runCurrentViewerEvents(ctx, out, signals, userID, state, activeChannelIDs)
 		}()
 		return out
 	}
 
 	go func() {
 		defer close(out)
-		s.runCurrentViewerEvents(ctx, out, nil, accessToken, userID, state, activeChannelIDs)
+		s.runCurrentViewerEvents(ctx, out, nil, userID, state, activeChannelIDs)
 	}()
 	return out
 }
 
-func (s *server) runCurrentViewerEvents(ctx context.Context, out chan<- sseEvent, signals <-chan viewerSignal, accessToken string, userID string, state *stateManager, activeChannelIDs map[string]bool) {
+func (s *server) runCurrentViewerEvents(ctx context.Context, out chan<- sseEvent, signals <-chan viewerSignal, userID string, state *stateManager, activeChannelIDs map[string]bool) {
 	emit := func(reason string) bool {
-		event, ok := s.currentViewersEvent(ctx, accessToken, userID, state, activeChannelIDs)
+		event, ok := s.currentViewersEvent(ctx, userID, state, activeChannelIDs)
 		if !ok {
 			return true
 		}
@@ -172,13 +172,13 @@ func (s *server) runCurrentViewerEvents(ctx context.Context, out chan<- sseEvent
 	}
 }
 
-func (s *server) currentViewersEvent(ctx context.Context, accessToken string, userID string, state *stateManager, activeChannelIDs map[string]bool) (sseEvent, bool) {
+func (s *server) currentViewersEvent(ctx context.Context, userID string, state *stateManager, activeChannelIDs map[string]bool) (sseEvent, bool) {
 	channelID := state.currentChannel(userID)
 	if channelID == "" || (activeChannelIDs != nil && !activeChannelIDs[channelID]) {
 		return sseEvent{}, false
 	}
 
-	viewers, err := s.fetchChannelViewers(ctx, accessToken, channelID)
+	viewers, err := s.fetchChannelViewers(ctx, s.cfg.traqBotAccessToken, channelID)
 	if err != nil {
 		if ctx.Err() == nil {
 			traqLogWarn("viewer event skipped channelID=%s: %v", channelID, err)
