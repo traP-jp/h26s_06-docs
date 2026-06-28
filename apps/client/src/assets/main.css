@@ -826,3 +826,134 @@ dd {
     color: #ccecff;
     background: rgb(68 150 210 / 14%);
 }
+
+.shortcutsButton {
+    width: 100%;
+    min-height: 42px;
+    border: 1px solid rgb(140 190 255 / 16%);
+    background:
+        linear-gradient(135deg, rgb(117 202 255 / 10%), transparent 44%), rgb(5 12 25 / 72%);
+    color: #adcae6;
+    cursor: pointer;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.shortcutsButton:hover {
+    border-color: rgb(105 215 255 / 36%);
+    color: #d9edff;
+    background:
+        linear-gradient(135deg, rgb(117 202 255 / 16%), transparent 44%), rgb(68 150 210 / 12%);
+}
+
+.shortcutOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 130;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background:
+        radial-gradient(circle at 22% 18%, rgb(117 202 255 / 13%), transparent 28%),
+        radial-gradient(circle at 82% 70%, rgb(236 63 165 / 10%), transparent 30%),
+        rgb(0 3 10 / 78%);
+    backdrop-filter: blur(10px);
+}
+
+.shortcutDialog {
+    width: min(760px, 100%);
+    max-height: min(720px, calc(100vh - 48px));
+    padding: 26px;
+    overflow: auto;
+    box-sizing: border-box;
+    border: 1px solid rgb(140 190 255 / 18%);
+    background: linear-gradient(180deg, rgb(12 26 48 / 96%), rgb(3 8 18 / 97%)), rgb(3 8 18);
+    color: #eaf3ff;
+    box-shadow:
+        0 0 0 1px rgb(255 255 255 / 3%) inset,
+        0 28px 90px rgb(0 0 0 / 58%),
+        0 0 54px rgb(117 202 255 / 10%);
+}
+
+.shortcutHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 24px;
+}
+
+.shortcutHeader h2 {
+    margin: 0;
+    font-size: 24px;
+    letter-spacing: 0.04em;
+}
+
+.shortcutGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 30px;
+}
+
+.shortcutSection h3 {
+    margin: 0 0 12px;
+    color: #75caff;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.shortcutSection dl {
+    display: grid;
+    gap: 10px;
+}
+
+.shortcutSection dl > div {
+    display: grid;
+    grid-template-columns: minmax(112px, max-content) 1fr;
+    align-items: center;
+    gap: 14px;
+    min-height: 36px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgb(140 190 255 / 9%);
+}
+
+.shortcutSection dt {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.shortcutSection dd {
+    color: #adcae6;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.shortcutSection kbd {
+    min-width: 24px;
+    padding: 4px 7px;
+    border: 1px solid rgb(140 190 255 / 18%);
+    background: rgb(0 0 0 / 34%);
+    color: #eaf3ff;
+    box-shadow:
+        0 1px 0 rgb(255 255 255 / 8%) inset,
+        0 0 12px rgb(117 202 255 / 8%);
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11px;
+    line-height: 1;
+    text-align: center;
+}
+
+.shortcut-fade-enter-active,
+.shortcut-fade-leave-active {
+    transition:
+        opacity 160ms ease,
+        transform 160ms ease;
+}
+
+.shortcut-fade-enter-from,
+.shortcut-fade-leave-to {
+    opacity: 0;
+}

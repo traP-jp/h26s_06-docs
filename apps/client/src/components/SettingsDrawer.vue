@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { ref } from "vue";
+
 import { audioManager } from "../audio/audioManager";
 import { useAudioSettings } from "../composables/useAudioSettings";
 import type { AuthUser, ConnectionState } from "../types/api";
 
 const open = defineModel<boolean>({ required: true });
+const shortcutsOpen = ref(false);
 defineProps<{
     connection: ConnectionState;
     connectionLabel: string;
@@ -31,6 +34,15 @@ function openDrawer(): void {
 
 function closeDrawer(): void {
     open.value = false;
+    shortcutsOpen.value = false;
+}
+
+function openShortcuts(): void {
+    shortcutsOpen.value = true;
+}
+
+function closeShortcuts(): void {
+    shortcutsOpen.value = false;
 }
 </script>
 
@@ -210,6 +222,16 @@ function closeDrawer(): void {
                 </button>
             </section>
 
+            <section class="settingsGroup">
+                <button
+                    type="button"
+                    class="shortcutsButton"
+                    @click="openShortcuts"
+                >
+                    Shortcuts
+                </button>
+            </section>
+
             <footer class="settingsStatus">
                 <div
                     class="connection"
@@ -244,5 +266,90 @@ function closeDrawer(): void {
                 </div>
             </footer>
         </aside>
+    </Transition>
+
+    <Transition name="shortcut-fade">
+        <div
+            v-if="shortcutsOpen"
+            class="shortcutOverlay"
+            role="presentation"
+            @click="closeShortcuts"
+        >
+            <section
+                class="shortcutDialog"
+                role="dialog"
+                aria-modal="true"
+                aria-label="キーボードショートカット"
+                @click.stop
+                @keydown.esc.stop.prevent="closeShortcuts"
+            >
+                <header class="shortcutHeader">
+                    <div>
+                        <p class="eyebrow">keyboard</p>
+                        <h2>Shortcuts</h2>
+                    </div>
+                    <button
+                        type="button"
+                        class="settingsClose"
+                        aria-label="ショートカット一覧を閉じる"
+                        @click="closeShortcuts"
+                    >
+                        ×
+                    </button>
+                </header>
+
+                <div class="shortcutGrid">
+                    <article class="shortcutSection">
+                        <h3>Camera</h3>
+                        <dl>
+                            <div>
+                                <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt>
+                                <dd>カメラを移動</dd>
+                            </div>
+                            <div>
+                                <dt><kbd>Q</kbd><kbd>E</kbd></dt>
+                                <dd>ズームアウト / ズームイン</dd>
+                            </div>
+                            <div>
+                                <dt><kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></dt>
+                                <dd>選択中ノードを中心に回転</dd>
+                            </div>
+                        </dl>
+                    </article>
+
+                    <article class="shortcutSection">
+                        <h3>Navigation</h3>
+                        <dl>
+                            <div>
+                                <dt><kbd>↑</kbd><kbd>↓</kbd></dt>
+                                <dd>子 / 親チャンネルへ移動</dd>
+                            </div>
+                            <div>
+                                <dt><kbd>←</kbd><kbd>→</kbd></dt>
+                                <dd>兄弟チャンネルへ移動</dd>
+                            </div>
+                            <div>
+                                <dt><kbd>R</kbd></dt>
+                                <dd>Grand Root を選択</dd>
+                            </div>
+                        </dl>
+                    </article>
+
+                    <article class="shortcutSection">
+                        <h3>App</h3>
+                        <dl>
+                            <div>
+                                <dt><kbd>M</kbd></dt>
+                                <dd>ミュート切り替え</dd>
+                            </div>
+                            <div>
+                                <dt><kbd>Esc</kbd></dt>
+                                <dd>選択解除 / 設定を開閉</dd>
+                            </div>
+                        </dl>
+                    </article>
+                </div>
+            </section>
+        </div>
     </Transition>
 </template>
