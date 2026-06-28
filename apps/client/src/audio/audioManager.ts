@@ -48,7 +48,7 @@ const AUDIO_VOLUME_MULTIPLIERS = {
     post: 0.5,
     move: 0.4,
     bloom: 1.8,
-    close: 2.3,
+    close: 3.0,
 } as const satisfies Record<AudioName, number>;
 
 const VOLUME_FADE_DURATION_MS = 600;

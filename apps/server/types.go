@@ -52,6 +52,7 @@ type triggerPayload struct {
 	ScoreDelta       float64 `json:"delta"`
 	ClearCurrent     bool    `json:"-"`
 	MessageID        string  `json:"-"`
+	MessageUserID    string  `json:"-"`
 	MessageLength    int     `json:"-"`
 	HasMessageLength bool    `json:"-"`
 	Source           string  `json:"-"`

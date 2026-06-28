@@ -239,6 +239,130 @@ func TestStateManagerApplyTriggerUsesMessageLengthScoreDelta(t *testing.T) {
 	}
 }
 
+func TestStateManagerApplyTriggerReducesRepeatedMessageScoreByUserAndChannel(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: "root", Name: "root"},
+		{ID: "other", Name: "other"},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	first, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-1",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("first message was not applied")
+	}
+
+	second, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-2",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("second message was not applied")
+	}
+
+	otherUser, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-3",
+		MessageUserID:    "user-2",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("other user message was not applied")
+	}
+
+	otherChannel, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "other",
+		MessageID:        "message-4",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("other channel message was not applied")
+	}
+
+	if first.ScoreDelta != messageScoreAmount {
+		t.Fatalf("first delta = %v, want %v", first.ScoreDelta, messageScoreAmount)
+	}
+	if math.Abs(second.ScoreDelta-messageScoreAmount/2) > 0.01 {
+		t.Fatalf("second delta = %v, want about %v", second.ScoreDelta, messageScoreAmount/2)
+	}
+	if otherUser.ScoreDelta != messageScoreAmount {
+		t.Fatalf("other user delta = %v, want %v", otherUser.ScoreDelta, messageScoreAmount)
+	}
+	if otherChannel.ScoreDelta != messageScoreAmount {
+		t.Fatalf("other channel delta = %v, want %v", otherChannel.ScoreDelta, messageScoreAmount)
+	}
+}
+
+func TestStateManagerMessageScoreReductionDecaysOverTime(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	now := time.Now()
+	state.mu.Lock()
+	state.storeMessageCountLocked("root", "user-1", 4, now.Add(-messageCountTimeScale*time.Second))
+	state.mu.Unlock()
+
+	applied, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-1",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("message was not applied")
+	}
+
+	decayedCount := 4 * math.Exp(-1)
+	want := messageScoreAmount / (1 + decayedCount)
+	if math.Abs(applied.ScoreDelta-want) > 0.01 {
+		t.Fatalf("delta = %v, want about %v", applied.ScoreDelta, want)
+	}
+}
+
+func TestStateManagerSyncPayloadDecaysMessageCounts(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	now := time.Now()
+	state.mu.Lock()
+	state.storeMessageCountLocked("root", "user-1", 4, now.Add(-messageCountTimeScale*time.Second))
+	state.mu.Unlock()
+
+	_ = state.syncPayload()
+
+	state.mu.RLock()
+	got := state.messageCounts["root"]["user-1"].Count
+	state.mu.RUnlock()
+
+	want := 4 * math.Exp(-1)
+	if math.Abs(got-want) > 0.01 {
+		t.Fatalf("message count = %v, want about %v", got, want)
+	}
+}
+
 func TestMessageScoreDeltaUsesReferenceCharacterCount(t *testing.T) {
 	tests := []struct {
 		name   string

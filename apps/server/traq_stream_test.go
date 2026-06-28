@@ -42,6 +42,9 @@ func TestFetchMessageInfoFetchesUserBot(t *testing.T) {
 	if info.ChannelID != "channel-1" {
 		t.Fatalf("channelID = %q, want %q", info.ChannelID, "channel-1")
 	}
+	if info.UserID != "user-1" {
+		t.Fatalf("userID = %q, want %q", info.UserID, "user-1")
+	}
 	if !info.IsBot {
 		t.Fatal("isBot = false, want true")
 	}
@@ -55,6 +58,9 @@ func TestFetchMessageInfoFetchesUserBot(t *testing.T) {
 	}
 	if info.ChannelID != "channel-2" {
 		t.Fatalf("second channelID = %q, want %q", info.ChannelID, "channel-2")
+	}
+	if info.UserID != "user-1" {
+		t.Fatalf("second userID = %q, want %q", info.UserID, "user-1")
 	}
 	if !info.IsBot {
 		t.Fatal("second isBot = false, want true")
@@ -279,5 +285,8 @@ func TestParseTraqEventMessageUsesBotTokenForMessageAPI(t *testing.T) {
 	}
 	if !triggers[0].HasMessageLength {
 		t.Fatal("HasMessageLength was false")
+	}
+	if triggers[0].MessageUserID != "user-a" {
+		t.Fatalf("MessageUserID = %q, want user-a", triggers[0].MessageUserID)
 	}
 }

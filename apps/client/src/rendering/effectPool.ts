@@ -14,6 +14,8 @@ import {
     Vector3,
 } from "three";
 
+import { setAnimatedNodePosition } from "./nodeWaver";
+
 import { audioManager } from "../audio/audioManager";
 import type { ChannelGraph, ChannelNode, VisualEvent } from "../core/channelGraph";
 
@@ -51,10 +53,7 @@ const BEAM_TRAIL_PROGRESS = 0.24;
 
 function getNodePosition(node: ChannelNode | undefined, now: number): Vector3 {
     if (!node) return new Vector3();
-    const wx = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
-    const wy = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
-    const wz = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
-    return new Vector3(node.x + wx, node.y + wy, node.z + wz);
+    return setAnimatedNodePosition(new Vector3(), node, now);
 }
 
 export class EffectPool {
@@ -65,7 +64,8 @@ export class EffectPool {
     constructor(
         private readonly scene: Scene,
         private readonly graph: ChannelGraph,
-        private readonly onMessageNodeReached: (id: string) => void
+        private readonly onMessageNodeReached: (id: string) => void,
+        private readonly onActivityNodeReached: (id: string) => void
     ) {
         this.ripples = Array.from({ length: RIPPLE_COUNT }, () => createRipple(scene));
         this.beams = Array.from({ length: BEAM_COUNT }, () => createBeam(scene));
@@ -157,6 +157,7 @@ export class EffectPool {
         const to = this.graph.get(toId);
         if (!from || !to) return;
         const beam = acquire(this.beams);
+        if (beam.active && beam.toId) this.onActivityNodeReached(beam.toId);
         beam.fromId = fromId;
         beam.toId = toId;
         setBeamColors(beam, to.color);
@@ -205,6 +206,7 @@ export class EffectPool {
             if (!beam.active) continue;
             const progress = (now - beam.startedAt - beam.delay) / beam.duration;
             if (progress >= 1) {
+                if (beam.toId) this.onActivityNodeReached(beam.toId);
                 beam.active = false;
                 beam.line.visible = false;
                 continue;
@@ -260,7 +262,10 @@ export class EffectPool {
         const reachedIndex = Math.floor(Math.min(1, progress) * (pathIds.length - 1));
         while (pulse.nextRevealIndex <= reachedIndex) {
             const id = pathIds[pulse.nextRevealIndex];
-            if (id) this.onMessageNodeReached(id);
+            if (id) {
+                this.onMessageNodeReached(id);
+                this.onActivityNodeReached(id);
+            }
             pulse.nextRevealIndex += 1;
         }
     }

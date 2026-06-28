@@ -20,9 +20,10 @@ import {
 } from "./core/keyboardController";
 import { beginLogin, fetchCurrentUser } from "./services/auth";
 import { calculateChannelLayout } from "./services/channelLayout";
+import { ChannelStatus } from "./services/channelStatus";
 import { EventStream } from "./services/eventStream";
 import { KeyboardManager } from "./services/keyboardManager";
-import type { AuthUser } from "./types/api";
+import type { AuthUser, ViewersPayload } from "./types/api";
 
 type AuthState = "checking" | "authenticated" | "error" | "forbidden";
 interface GalaxyCanvasControls {
@@ -50,13 +51,18 @@ const {
     activeOnly,
     displayMode,
     eventCount,
-    lastEvent,
     updatedAt,
+    eventToasts,
     renderError,
+    viewers,
+    viewersPending,
+    viewersUnavailable,
     selected,
     connectionLabel,
     recordTrigger,
     resetActivity,
+    dismissEventToast,
+    clearEventToasts,
 } = useAppState();
 
 const { toggleMuted } = useAudioSettings();
@@ -69,6 +75,37 @@ const focusId = ref<string | undefined>();
 const focusRevision = ref(0);
 const settingsOpen = ref(false);
 const detailsOpen = ref(false);
+const activity = ref(0);
+let pendingStatusChannelId: string | undefined;
+let bufferedViewers: ViewersPayload | undefined;
+
+function applyViewers(payload: ViewersPayload): void {
+    viewers.value = payload.viewers;
+    viewersPending.value = false;
+    viewersUnavailable.value = false;
+}
+
+const channelStatus = isDemoMode
+    ? undefined
+    : new ChannelStatus({
+          onSending(channelId) {
+              pendingStatusChannelId = channelId;
+              bufferedViewers = undefined;
+          },
+          onApplied(channelId) {
+              if (pendingStatusChannelId === channelId) pendingStatusChannelId = undefined;
+              if (channelId === (selectedId.value ?? "") && bufferedViewers) {
+                  applyViewers(bufferedViewers);
+                  bufferedViewers = undefined;
+              }
+          },
+          onError(channelId) {
+              if (pendingStatusChannelId === channelId) pendingStatusChannelId = undefined;
+              if (channelId !== (selectedId.value ?? "")) return;
+              viewersPending.value = false;
+              viewersUnavailable.value = true;
+          },
+      });
 const galaxyCanvas = ref<GalaxyCanvasControls>();
 
 const showLoading = computed(
@@ -162,6 +199,14 @@ function revealMessageNode(id: string): void {
 
 function updateGraphVisibility(targetGraph: ChannelGraph, selected?: string) {
     return targetGraph.updateVisibility(selected, undefined, displayMode.value);
+}
+
+function focusEventToast(channelId: string, toastId: number): void {
+    if (!channelId) return;
+    selectedId.value = channelId;
+    focusId.value = channelId;
+    focusRevision.value += 1;
+    dismissEventToast(toastId);
 }
 
 async function retryAuthentication() {
@@ -295,6 +340,15 @@ function connectStream() {
             }
         },
 
+        onViewers(payload) {
+            if (!selectedId.value) return;
+            if (pendingStatusChannelId !== undefined) {
+                if (pendingStatusChannelId === selectedId.value) bufferedViewers = payload;
+                return;
+            }
+            applyViewers(payload);
+        },
+
         onMalformedEvent(eventName) {
             status.value = `${eventName} イベントを解釈できませんでした`;
         },
@@ -325,6 +379,11 @@ onMounted(() => {
 
 watch(selectedId, (newId, oldId) => {
     detailsOpen.value = Boolean(newId);
+    viewers.value = [];
+    bufferedViewers = undefined;
+    viewersPending.value = Boolean(newId) && !isDemoMode;
+    viewersUnavailable.value = isDemoMode;
+    channelStatus?.setChannel(newId);
 
     if (!graph.value) {
         focusId.value = newId;
@@ -355,6 +414,8 @@ onBeforeUnmount(() => {
     keyboardManager.stop();
     mounted = false;
     authGeneration += 1;
+    clearEventToasts();
+    channelStatus?.setChannel();
     clearSelectedLayoutTimer();
     stopStream(false);
 });
@@ -368,6 +429,11 @@ onBeforeUnmount(() => {
         <SettingsDrawer
             v-if="authState === 'authenticated'"
             v-model="settingsOpen"
+            :connection="connection"
+            :connection-label="connectionLabel"
+            :status="status"
+            :is-demo-mode="isDemoMode"
+            :current-user="currentUser"
         />
 
         <GalaxyCanvas
@@ -381,6 +447,7 @@ onBeforeUnmount(() => {
             :display-mode="displayMode"
             @select="selectedId = $event"
             @message-node-reached="revealMessageNode"
+            @activity-change="activity = $event"
             @render-error="renderError = $event"
         />
 
@@ -418,22 +485,53 @@ onBeforeUnmount(() => {
             <button @click="reloadPage">再読み込み</button>
         </div>
 
-        <AppTopBar
-            :auth-state="authState"
-            :connection="connection"
-            :connection-label="connectionLabel"
-            :status="status"
-            :is-demo-mode="isDemoMode"
-            :current-user="currentUser"
-        />
+        <AppTopBar />
 
         <AppMetrics
             v-if="authState === 'authenticated'"
             :graph="graph"
             :event-count="eventCount"
-            :last-event="lastEvent"
             :updated-at="updatedAt"
         />
+
+        <aside
+            v-if="authState === 'authenticated'"
+            class="event-toasts"
+            aria-live="polite"
+            aria-label="イベント通知"
+        >
+            <TransitionGroup name="event-toast">
+                <article
+                    v-for="toast in eventToasts"
+                    :key="toast.id"
+                    class="event-toast"
+                    :data-tone="toast.tone"
+                >
+                    <button
+                        type="button"
+                        class="event-toast__focus"
+                        :aria-label="`${toast.detail}のチャンネルにフォーカス`"
+                        @click="focusEventToast(toast.channelId, toast.id)"
+                    >
+                        <span
+                            class="event-toast__signal"
+                            aria-hidden="true"
+                        />
+                        <span class="event-toast__body">
+                            {{ toast.detail }}
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        class="event-toast__close"
+                        aria-label="イベント通知を閉じる"
+                        @click="dismissEventToast(toast.id)"
+                    >
+                        ×
+                    </button>
+                </article>
+            </TransitionGroup>
+        </aside>
 
         <DisplayControls
             v-if="authState === 'authenticated'"
@@ -444,6 +542,9 @@ onBeforeUnmount(() => {
         <ChannelDetails
             v-if="selected && detailsOpen"
             :selected="selected"
+            :activity="activity"
+            :viewer-count="viewersUnavailable ? undefined : viewers.length"
+            :viewers-pending="viewersPending"
             @close="detailsOpen = false"
         />
 
