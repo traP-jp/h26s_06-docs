@@ -208,7 +208,7 @@ h2 {
     top: 330px;
     left: 24px;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     width: 230px;
     gap: 6px;
     padding: 14px 17px 17px;
@@ -265,26 +265,155 @@ dd {
     font-size: 20px;
 }
 
-.latest {
+.stream-clock {
     display: grid;
     gap: 5px;
     margin-top: 15px;
 }
 
-.latest span,
-.latest time {
+.stream-clock span,
+.stream-clock time {
     color: #62768f;
     font-size: 8px;
-    letter-spacing: 0.14em;
+    letter-spacing: 0;
 }
 
-.latest strong {
+.stream-clock time {
+    color: #adcae6;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 12px;
+}
+
+.event-toasts {
+    position: absolute;
+    top: 84px;
+    right: 24px;
+    z-index: 4;
+    display: grid;
+    width: min(260px, calc(100vw - 48px));
+    pointer-events: none;
+}
+
+.event-toast {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 22px;
+    gap: 9px;
+    align-items: center;
     overflow: hidden;
+    min-height: 42px;
+    border: 1px solid rgb(140 190 255 / 18%);
+    border-radius: 6px;
+    padding: 8px 8px 8px 10px;
+    background:
+        linear-gradient(135deg, rgb(6 15 30 / 92%), rgb(10 17 25 / 80%)), rgb(5 12 25 / 88%);
+    box-shadow: 0 12px 42px rgb(0 0 0 / 28%);
+    backdrop-filter: blur(18px);
+    pointer-events: auto;
+}
+
+.event-toast__focus {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 7px minmax(0, 1fr);
+    gap: 9px;
+    align-items: center;
+    min-width: 0;
+    border: 0;
+    padding: 8px 39px 8px 10px;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+}
+
+.event-toast:has(> .event-toast__focus:focus-visible) {
+    border-color: rgb(117 202 255 / 72%);
+}
+
+.event-toast__focus:focus-visible {
+    outline: none;
+}
+
+.event-toast::before {
+    position: absolute;
+    inset: 0;
+    border-left: 2px solid #75caff;
+    content: "";
+    pointer-events: none;
+}
+
+.event-toast[data-tone="move"]::before {
+    border-left-color: #63efb2;
+}
+
+.event-toast__signal {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #75caff;
+    box-shadow: 0 0 18px rgb(117 202 255 / 72%);
+}
+
+.event-toast[data-tone="move"] .event-toast__signal {
+    background: #63efb2;
+    box-shadow: 0 0 18px rgb(99 239 178 / 58%);
+}
+
+.event-toast__body {
+    display: block;
+    overflow: hidden;
+    min-width: 0;
     color: #adcae6;
     font-size: 11px;
-    font-weight: 500;
+    line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.event-toast__close {
+    position: relative;
+    z-index: 1;
+    grid-column: 2;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0;
+    color: #7187a4;
+    background: transparent;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+}
+
+.event-toast__close:hover {
+    border-color: rgb(140 190 255 / 16%);
+    color: #d9edff;
+    background: rgb(140 190 255 / 8%);
+}
+
+.event-toast-enter-active,
+.event-toast-leave-active,
+.event-toast-move {
+    transition:
+        opacity 180ms ease,
+        transform 180ms ease;
+}
+
+.event-toast-enter-from,
+.event-toast-leave-to {
+    opacity: 0;
+    transform: translateX(18px);
+}
+
+.event-toast-leave-active {
+    position: absolute;
+    width: 100%;
 }
 
 .details {
@@ -534,6 +663,18 @@ dd {
         top: 308px;
         left: 12px;
         width: 190px;
+    }
+
+    .event-toasts {
+        top: 86px;
+        right: 12px;
+        bottom: auto;
+        left: 12px;
+        width: auto;
+    }
+
+    .event-toast {
+        min-height: 42px;
     }
 
     .details {
@@ -883,8 +1024,7 @@ dd {
     width: 100%;
     min-height: 42px;
     border: 1px solid rgb(140 190 255 / 16%);
-    background:
-        linear-gradient(135deg, rgb(117 202 255 / 10%), transparent 44%), rgb(5 12 25 / 72%);
+    background: rgb(97 152 214 / 10%);
     color: #adcae6;
     cursor: pointer;
     font-size: 11px;
@@ -895,8 +1035,7 @@ dd {
 .shortcutsButton:hover {
     border-color: rgb(105 215 255 / 36%);
     color: #d9edff;
-    background:
-        linear-gradient(135deg, rgb(117 202 255 / 16%), transparent 44%), rgb(68 150 210 / 12%);
+    background: rgb(68 150 210 / 14%);
 }
 
 .shortcutOverlay {
@@ -906,10 +1045,7 @@ dd {
     display: grid;
     place-items: center;
     padding: 24px;
-    background:
-        radial-gradient(circle at 22% 18%, rgb(117 202 255 / 13%), transparent 28%),
-        radial-gradient(circle at 82% 70%, rgb(236 63 165 / 10%), transparent 30%),
-        rgb(0 3 10 / 78%);
+    background: rgb(0 3 10 / 78%);
     backdrop-filter: blur(10px);
 }
 
@@ -920,12 +1056,11 @@ dd {
     overflow: auto;
     box-sizing: border-box;
     border: 1px solid rgb(140 190 255 / 18%);
-    background: linear-gradient(180deg, rgb(12 26 48 / 96%), rgb(3 8 18 / 97%)), rgb(3 8 18);
+    background: rgb(5 12 25 / 96%);
     color: #eaf3ff;
     box-shadow:
         0 0 0 1px rgb(255 255 255 / 3%) inset,
-        0 28px 90px rgb(0 0 0 / 58%),
-        0 0 54px rgb(117 202 255 / 10%);
+        0 28px 90px rgb(0 0 0 / 58%);
 }
 
 .shortcutHeader {

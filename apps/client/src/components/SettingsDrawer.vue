@@ -330,7 +330,7 @@ function closeShortcuts(): void {
                             </div>
                             <div>
                                 <dt><kbd>R</kbd></dt>
-                                <dd>Grand Root を選択</dd>
+                                <dd>ルートチャンネルへ移動</dd>
                             </div>
                         </dl>
                     </article>

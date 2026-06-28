@@ -1,7 +1,16 @@
 import { computed, ref, shallowRef, watch } from "vue";
 
-import type { ChannelGraph, ChannelNode } from "../core/channelGraph";
+import type { ChannelDisplayMode, ChannelGraph, ChannelNode } from "../core/channelGraph";
 import type { ConnectionState, TriggerPayload } from "../types/api";
+
+const EVENT_TOAST_DURATION_MS = 5200;
+
+interface EventToast {
+    id: number;
+    channelId: string;
+    tone: "message" | "move";
+    detail: string;
+}
 
 export interface NavigationTargets {
     parentId?: string;
@@ -23,10 +32,14 @@ export function useAppState() {
     const status = ref("デモサーバーへ接続中");
     const selectedId = ref<string>();
     const activeOnly = ref(false);
+    const displayMode = ref<ChannelDisplayMode>("collapsed");
     const eventCount = ref(0);
     const lastEvent = ref("初期データを待っています");
     const updatedAt = ref("");
+    const eventToasts = ref<EventToast[]>([]);
     const renderError = ref<string>();
+    const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+    let nextToastId = 1;
     const viewers = ref<string[]>([]);
     const viewersPending = ref(false);
     const viewersUnavailable = ref(false);
@@ -61,12 +74,19 @@ export function useAppState() {
     function recordTrigger(trigger: TriggerPayload) {
         const id = trigger.type === "msg" ? trigger.ch : trigger.to;
         const channelName = id ? (graph.value?.get(id)?.name ?? id) : "unknown";
+        const time = new Date().toLocaleTimeString("ja-JP");
+
         eventCount.value += 1;
         lastEvent.value =
             trigger.type === "msg"
-                ? `${channelName} にメッセージ`
-                : `${channelName} へユーザーが移動`;
-        updatedAt.value = new Date().toLocaleTimeString("ja-JP");
+                ? `#${channelName} にメッセージ`
+                : `#${channelName} へユーザーが移動`;
+        updatedAt.value = time;
+        pushEventToast({
+            channelId: id ?? "",
+            tone: trigger.type === "msg" ? "message" : "move",
+            detail: lastEvent.value,
+        });
     }
 
     function resetActivity() {
@@ -79,6 +99,41 @@ export function useAppState() {
         eventCount.value = 0;
         lastEvent.value = "初期データを待っています";
         updatedAt.value = "";
+        clearEventToasts();
+    }
+
+    function pushEventToast(toast: Omit<EventToast, "id">) {
+        const id = nextToastId++;
+
+        clearEventToasts();
+        eventToasts.value = [{ ...toast, id }];
+
+        toastTimers.set(
+            id,
+            setTimeout(() => {
+                dismissEventToast(id);
+            }, EVENT_TOAST_DURATION_MS)
+        );
+    }
+
+    function dismissEventToast(id: number) {
+        clearEventToastTimer(id);
+        eventToasts.value = eventToasts.value.filter(toast => toast.id !== id);
+    }
+
+    function clearEventToastTimer(id: number) {
+        const timer = toastTimers.get(id);
+        if (timer) clearTimeout(timer);
+        toastTimers.delete(id);
+    }
+
+    function clearEventToasts() {
+        for (const timer of toastTimers.values()) {
+            clearTimeout(timer);
+        }
+
+        toastTimers.clear();
+        eventToasts.value = [];
     }
 
     watch(selectedId, id => {
@@ -98,9 +153,11 @@ export function useAppState() {
         status,
         selectedId,
         activeOnly,
+        displayMode,
         eventCount,
         lastEvent,
         updatedAt,
+        eventToasts,
         renderError,
         viewers,
         viewersPending,
@@ -109,5 +166,7 @@ export function useAppState() {
         connectionLabel,
         recordTrigger,
         resetActivity,
+        dismissEventToast,
+        clearEventToasts,
     };
 }

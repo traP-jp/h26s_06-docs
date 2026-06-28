@@ -183,6 +183,25 @@ describe("ChannelGraph active visibility", () => {
 
         expect(graph.get("nested")!.visibilityAlpha).toBeGreaterThan(0);
     });
+
+    test("activates every node in all channel display mode", () => {
+        const graph = new ChannelGraph(createDeepChannels());
+
+        expect(graph.updateVisibility(undefined, undefined, "all")).toBe(true);
+
+        expect(graph.nodes.every(node => node.isLayoutActive)).toBe(true);
+        expect(graph.nodes.every(node => node.emphasis === 1)).toBe(true);
+    });
+
+    test("does not mark the selected node as an expansion origin in all channel display mode", () => {
+        const graph = new ChannelGraph(createDeepChannels());
+
+        graph.updateVisibility("branch", undefined, "all");
+
+        expect(graph.get("branch")!.isLayoutActive).toBe(true);
+        expect(graph.get("branch")!.isExpansionOrigin).toBe(false);
+        expect(graph.get("nested")!.isLayoutActive).toBe(true);
+    });
 });
 
 describe("ChannelGraph score sync", () => {
