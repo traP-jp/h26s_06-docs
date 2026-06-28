@@ -1,0 +1,1 @@
+ghcr.io/trap-jp/h26s_06/client@sha256:4d1c3a6bd2d62f39f7dca21039e1648b1427abfb22df615feec72fc8e34fe361
