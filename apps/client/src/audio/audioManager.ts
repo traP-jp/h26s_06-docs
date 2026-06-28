@@ -218,11 +218,12 @@ class AudioManager {
         const startedAt = performance.now();
 
         const updateVolumes = (now: number): void => {
-            const progress = Math.min((now - startedAt) / durationMs, 1);
+            const progress = this.clampVolume((now - startedAt) / durationMs);
 
             for (const [audio, targetVolume] of targets) {
                 const initialVolume = initialVolumes.get(audio) ?? targetVolume;
-                audio.volume = initialVolume + (targetVolume - initialVolume) * progress;
+                const volume = initialVolume + (targetVolume - initialVolume) * progress;
+                audio.volume = this.clampVolume(volume);
             }
 
             if (progress < 1) {
