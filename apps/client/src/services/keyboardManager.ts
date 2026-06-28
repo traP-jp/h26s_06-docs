@@ -30,6 +30,7 @@ const ARROW_TO_TARGET = {
     ArrowLeft: "previousSiblingId",
     ArrowRight: "nextSiblingId",
 } as const;
+const REPEATED_ARROW_KEY_DEBOUNCE_MS = 140;
 
 type ArrowKey = keyof typeof ARROW_TO_TARGET;
 
@@ -42,9 +43,40 @@ export function useKeyboardManager({
     onSettingsOpen,
     onSettingsClose,
 }: KeyboardManagerOptions): void {
+    let repeatedArrowTimer: ReturnType<typeof setTimeout> | undefined;
+    let pendingRepeatedArrowKey: ArrowKey | undefined;
+
+    function clearRepeatedArrowNavigation(): void {
+        if (repeatedArrowTimer) {
+            clearTimeout(repeatedArrowTimer);
+            repeatedArrowTimer = undefined;
+        }
+        pendingRepeatedArrowKey = undefined;
+    }
+
+    function navigateByArrowKey(key: ArrowKey): void {
+        const targetKey = ARROW_TO_TARGET[key];
+        const nextSelectedId = selected.value?.navigation?.[targetKey];
+
+        if (!nextSelectedId) return;
+
+        selectedId.value = nextSelectedId;
+    }
+
+    function debounceRepeatedArrowNavigation(key: ArrowKey): void {
+        pendingRepeatedArrowKey = key;
+        if (repeatedArrowTimer) clearTimeout(repeatedArrowTimer);
+        repeatedArrowTimer = setTimeout(() => {
+            const nextKey = pendingRepeatedArrowKey;
+            clearRepeatedArrowNavigation();
+            if (nextKey) navigateByArrowKey(nextKey);
+        }, REPEATED_ARROW_KEY_DEBOUNCE_MS);
+    }
+
     function handleKeyDown(event: KeyboardEvent): void {
         if (event.key === "Escape") {
             event.preventDefault();
+            clearRepeatedArrowNavigation();
 
             if (settingsOpen?.value) {
                 if (onSettingsClose) {
@@ -74,6 +106,7 @@ export function useKeyboardManager({
 
         if (isMuteKey(event)) {
             event.preventDefault();
+            clearRepeatedArrowNavigation();
 
             if (onMuteToggle) {
                 onMuteToggle();
@@ -86,13 +119,14 @@ export function useKeyboardManager({
 
         if (!isArrowKey(event.key)) return;
 
-        const targetKey = ARROW_TO_TARGET[event.key];
-        const nextSelectedId = selected.value?.navigation?.[targetKey];
-
-        if (!nextSelectedId) return;
-
         event.preventDefault();
-        selectedId.value = nextSelectedId;
+        if (event.repeat) {
+            debounceRepeatedArrowNavigation(event.key);
+            return;
+        }
+
+        clearRepeatedArrowNavigation();
+        navigateByArrowKey(event.key);
     }
 
     onMounted(() => {
@@ -100,6 +134,7 @@ export function useKeyboardManager({
     });
 
     onBeforeUnmount(() => {
+        clearRepeatedArrowNavigation();
         window.removeEventListener("keydown", handleKeyDown);
     });
 }
