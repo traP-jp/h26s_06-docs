@@ -4,7 +4,6 @@ import type { ChannelGraph } from "../core/channelGraph";
 defineProps<{
     graph?: ChannelGraph;
     eventCount: number;
-    lastEvent: string;
     updatedAt: string;
 }>();
 </script>
@@ -22,9 +21,8 @@ defineProps<{
                 <dd>{{ eventCount }}</dd>
             </div>
         </dl>
-        <div class="latest">
-            <span>LAST SIGNAL</span>
-            <strong>{{ lastEvent }}</strong>
+        <div class="stream-clock">
+            <span>LAST UPDATE</span>
             <time>{{ updatedAt || "—" }}</time>
         </div>
     </aside>

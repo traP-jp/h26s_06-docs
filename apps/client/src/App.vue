@@ -50,8 +50,8 @@ const {
     selectedId,
     activeOnly,
     eventCount,
-    lastEvent,
     updatedAt,
+    eventToasts,
     renderError,
     viewers,
     viewersPending,
@@ -60,6 +60,8 @@ const {
     connectionLabel,
     recordTrigger,
     resetActivity,
+    dismissEventToast,
+    clearEventToasts,
 } = useAppState();
 
 const { toggleMuted } = useAudioSettings();
@@ -186,6 +188,14 @@ function scheduleSelectedLayout(targetGraph: ChannelGraph, isClosingSelection: b
 
 function revealMessageNode(id: string): void {
     graph.value?.revealMessageNode(id);
+}
+
+function focusEventToast(channelId: string, toastId: number): void {
+    if (!channelId) return;
+    selectedId.value = channelId;
+    focusId.value = channelId;
+    focusRevision.value += 1;
+    dismissEventToast(toastId);
 }
 
 async function retryAuthentication() {
@@ -385,6 +395,7 @@ onBeforeUnmount(() => {
     keyboardManager.stop();
     mounted = false;
     authGeneration += 1;
+    clearEventToasts();
     channelStatus?.setChannel();
     clearSelectedLayoutTimer();
     stopStream(false);
@@ -460,9 +471,47 @@ onBeforeUnmount(() => {
             v-if="authState === 'authenticated'"
             :graph="graph"
             :event-count="eventCount"
-            :last-event="lastEvent"
             :updated-at="updatedAt"
         />
+
+        <aside
+            v-if="authState === 'authenticated'"
+            class="event-toasts"
+            aria-live="polite"
+            aria-label="イベント通知"
+        >
+            <TransitionGroup name="event-toast">
+                <article
+                    v-for="toast in eventToasts"
+                    :key="toast.id"
+                    class="event-toast"
+                    :data-tone="toast.tone"
+                >
+                    <button
+                        type="button"
+                        class="event-toast__focus"
+                        :aria-label="`${toast.detail}のチャンネルにフォーカス`"
+                        @click="focusEventToast(toast.channelId, toast.id)"
+                    >
+                        <span
+                            class="event-toast__signal"
+                            aria-hidden="true"
+                        />
+                        <span class="event-toast__body">
+                            {{ toast.detail }}
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        class="event-toast__close"
+                        aria-label="イベント通知を閉じる"
+                        @click="dismissEventToast(toast.id)"
+                    >
+                        ×
+                    </button>
+                </article>
+            </TransitionGroup>
+        </aside>
 
         <DisplayControls
             v-if="authState === 'authenticated'"
