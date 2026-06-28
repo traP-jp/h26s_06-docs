@@ -2,6 +2,7 @@ import { ACTIVE_RELATIVE_SCORE_THRESHOLD, type ChannelNode } from "./channelGrap
 
 const MATRIX_SIZE = 16;
 const COLOR_SIZE = 3;
+const ACTIVE_ANCESTOR_VISUAL_WEIGHT = 0.42;
 
 /**
  * ChannelGraph と GPU の境界。行列と色を連続した TypedArray に保持し、
@@ -26,8 +27,16 @@ export class NodeBuffer {
             const visible =
                 !activeOnly ||
                 node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD ||
+                node.activeDescendantScore > 0 ||
                 node.id === "grand_root" ||
                 node.id === selectedId;
+            const activeAncestorOnly =
+                activeOnly &&
+                node.activeDescendantScore > 0 &&
+                node.relativeScore <= ACTIVE_RELATIVE_SCORE_THRESHOLD &&
+                node.id !== "grand_root" &&
+                node.id !== selectedId;
+            const displayWeight = activeAncestorOnly ? ACTIVE_ANCESTOR_VISUAL_WEIGHT : 1;
             const baseScale =
                 node.id === "grand_root"
                     ? 4.2
@@ -39,6 +48,7 @@ export class NodeBuffer {
                 (1 + pulse) *
                 selectedScale *
                 node.emphasis *
+                displayWeight *
                 Number(visible) *
                 node.visibilityAlpha;
 
@@ -46,7 +56,13 @@ export class NodeBuffer {
             const waverY = Math.cos(now * 0.0009 + index * 0.8) * 1.5;
             const waverZ = Math.sin(now * 0.0007 + index * 1.5) * 1.5;
             writeMatrix(this.matrixData, index * MATRIX_SIZE, node, scale, waverX, waverY, waverZ);
-            writeColor(this.colorData, index * COLOR_SIZE, node.color, heat, node.emphasis);
+            writeColor(
+                this.colorData,
+                index * COLOR_SIZE,
+                node.color,
+                heat,
+                node.emphasis * displayWeight
+            );
         }
     }
 }
