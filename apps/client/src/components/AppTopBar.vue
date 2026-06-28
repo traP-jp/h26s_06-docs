@@ -13,14 +13,16 @@ defineProps<{
 
 <template>
     <header class="topbar ui-panel">
-        <div>
+        <div class="topbar__brand">
             <img
                 src="../assets/Qosmos_logoless.png"
                 alt="Qosmos logo"
                 class="topbar-logo"
             />
-            <p class="eyebrow">traQ ACTIVITY OBSERVATORY</p>
-            <h1>Qosmos</h1>
+            <div class="topbar__title">
+                <p class="eyebrow">traQ ACTIVITY OBSERVATORY</p>
+                <h1>Qosmos</h1>
+            </div>
         </div>
         <div
             v-if="authState === 'authenticated'"
