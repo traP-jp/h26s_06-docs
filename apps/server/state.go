@@ -239,12 +239,12 @@ func (sm *stateManager) scoreRecords() []scoreRecord {
 	records := make([]scoreRecord, 0, len(sm.channels))
 	for _, ch := range sm.channels {
 		records = append(records, scoreRecord{
-			ChannelID:      ch.ID,
-			Score:          ch.Score,
-			LastSyncScore:  ch.LastSyncScore,
-			LastSyncTime:   ch.LastSyncTime,
-			LastDecayTime:  ch.LastDecayTime,
-			LastViewTime:   ch.LastViewTime,
+			ChannelID:     ch.ID,
+			Score:         ch.Score,
+			LastSyncScore: ch.LastSyncScore,
+			LastSyncTime:  ch.LastSyncTime,
+			LastDecayTime: ch.LastDecayTime,
+			LastViewTime:  ch.LastViewTime,
 		})
 	}
 	return records
@@ -492,6 +492,17 @@ func (sm *stateManager) sampleViewerChannels(candidates []traqChannel, maxChanne
 		channels = append(channels, selectedChannel.channel)
 	}
 	return channels
+}
+
+func (sm *stateManager) channelName(channelID string) (string, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	ch := sm.channels[channelID]
+	if ch == nil {
+		return "", false
+	}
+	return ch.Name, true
 }
 
 func viewerPollWeight(score float64, elapsedSeconds float64) float64 {

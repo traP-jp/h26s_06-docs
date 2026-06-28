@@ -61,10 +61,11 @@ func (s wsViewState) channelID() string {
 }
 
 type wsChannelViewersChangedBody struct {
-	ID             string `json:"id"`
-	ChannelID      string `json:"channelId"`
-	ChannelIDUpper string `json:"channelID"`
-	ChannelIDSnake string `json:"channel_id"`
+	ID             string       `json:"id"`
+	ChannelID      string       `json:"channelId"`
+	ChannelIDUpper string       `json:"channelID"`
+	ChannelIDSnake string       `json:"channel_id"`
+	Viewers        []traqViewer `json:"viewers"`
 	Channel        struct {
 		ID string `json:"id"`
 	} `json:"channel"`
@@ -87,6 +88,45 @@ func (b wsChannelViewersChangedBody) channelID() string {
 
 func (s *server) streamTraqTriggers(ctx context.Context, accessToken string) (<-chan triggerPayload, <-chan error) {
 	out := make(chan triggerPayload)
+	errs := make(chan error, 1)
+
+	events, streamErrs := s.streamTraqEvents(ctx, accessToken, nil)
+
+	go func() {
+		defer close(out)
+		defer close(errs)
+
+		for events != nil || streamErrs != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-events:
+				if !ok {
+					events = nil
+					continue
+				}
+				for _, trigger := range event.Triggers {
+					select {
+					case out <- trigger:
+					case <-ctx.Done():
+						return
+					}
+				}
+			case err, ok := <-streamErrs:
+				if !ok {
+					streamErrs = nil
+					continue
+				}
+				errs <- err
+			}
+		}
+	}()
+
+	return out, errs
+}
+
+func (s *server) streamTraqEvents(ctx context.Context, accessToken string, state *stateManager) (<-chan traqStreamEvent, <-chan error) {
+	out := make(chan traqStreamEvent)
 	errs := make(chan error, 1)
 
 	go func() {
@@ -126,17 +166,18 @@ func (s *server) streamTraqTriggers(ctx context.Context, accessToken string) (<-
 				}
 				return
 			}
-			triggers, err := s.parseTraqEvent(ctx, accessToken, payload)
+			event, err := s.parseTraqStreamEvent(ctx, accessToken, payload, state)
 			if err != nil {
 				traqLogError("skip ws event: %v", err)
 				continue
 			}
-			for _, trigger := range triggers {
-				select {
-				case out <- trigger:
-				case <-ctx.Done():
-					return
-				}
+			if len(event.Triggers) == 0 && len(event.ViewerUpdates) == 0 {
+				continue
+			}
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
@@ -145,9 +186,17 @@ func (s *server) streamTraqTriggers(ctx context.Context, accessToken string) (<-
 }
 
 func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload []byte) ([]triggerPayload, error) {
+	event, err := s.parseTraqStreamEvent(ctx, accessToken, payload, nil)
+	if err != nil {
+		return nil, err
+	}
+	return event.Triggers, nil
+}
+
+func (s *server) parseTraqStreamEvent(ctx context.Context, accessToken string, payload []byte, state *stateManager) (traqStreamEvent, error) {
 	var event wsEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
-		return nil, err
+		return traqStreamEvent{}, err
 	}
 	eventType := strings.ToUpper(event.Type)
 	traqLogWS("received type=%s bodyBytes=%d", eventType, len(event.Body))
@@ -156,11 +205,11 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 	case "MESSAGE_CREATED":
 		var body wsMessageCreatedBody
 		if err := json.Unmarshal(event.Body, &body); err != nil {
-			return nil, err
+			return traqStreamEvent{}, err
 		}
 		if body.ID == "" {
 			traqLogWarn("MESSAGE_CREATED skipped: empty message id")
-			return nil, nil
+			return traqStreamEvent{}, nil
 		}
 		traqLogWS("MESSAGE_CREATED messageID=%s", body.ID)
 		info, err := s.fetchMessageInfo(ctx, s.cfg.traqBotAccessToken, body.ID)
@@ -171,10 +220,10 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 			if err == nil && !info.IsBot && info.ChannelID == "" {
 				traqLogWarn("MESSAGE_CREATED skipped: empty channel messageID=%s", body.ID)
 			}
-			return nil, err
+			return traqStreamEvent{}, err
 		}
 		traqLogOK("MESSAGE_CREATED accepted messageID=%s channelID=%s", body.ID, info.ChannelID)
-		return []triggerPayload{{
+		return traqStreamEvent{Triggers: []triggerPayload{{
 			Type:             "msg",
 			Ch:               info.ChannelID,
 			MessageID:        body.ID,
@@ -182,13 +231,16 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 			HasMessageLength: true,
 			Source:           "ws",
 			SourceDetail:     "traQ /api/v3/ws timeline_streaming:on MESSAGE_CREATED",
-		}}, nil
+		}}}, nil
 	case "USER_VIEWSTATE_CHANGED":
 		var body wsViewStateChangedBody
 		if err := json.Unmarshal(event.Body, &body); err != nil {
-			return nil, err
+			return traqStreamEvent{}, err
 		}
 		triggers := make([]triggerPayload, 0, len(body.ViewStates))
+		rows := make([]viewerRow, 0, len(body.ViewStates))
+		sampledChannelIDs := make(map[string]bool)
+		now := time.Now()
 		for _, view := range body.ViewStates {
 			channelID := view.channelID()
 			if view.Key == "" || channelID == "" {
@@ -204,30 +256,79 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 				trigger.From = channelID
 				trigger.ClearCurrent = true
 				triggers = append(triggers, trigger)
+			} else {
+				trigger.To = channelID
+				triggers = append(triggers, trigger)
+			}
+			if state == nil {
 				continue
 			}
-			trigger.To = channelID
-			triggers = append(triggers, trigger)
+			channelName, ok := state.channelName(channelID)
+			if !ok {
+				continue
+			}
+			rows = append(rows, viewerRow{
+				UserID:      trigger.Usr,
+				ChannelID:   channelID,
+				ChannelName: channelName,
+				State:       view.State,
+				UpdatedAt:   now,
+			})
+			sampledChannelIDs[channelID] = true
 		}
 		traqLogWS("USER_VIEWSTATE_CHANGED viewStates=%d triggers=%d", len(body.ViewStates), len(triggers))
-		return triggers, nil
+		result := traqStreamEvent{Triggers: triggers}
+		if len(rows) > 0 {
+			result.ViewerUpdates = []viewerUpdate{{
+				Rows:              rows,
+				SampledChannelIDs: sampledChannelIDs,
+			}}
+		}
+		return result, nil
 	case "CHANNEL_VIEWERS_CHANGED":
 		var body wsChannelViewersChangedBody
 		if err := json.Unmarshal(event.Body, &body); err != nil {
-			return nil, err
+			return traqStreamEvent{}, err
 		}
 		channelID := body.channelID()
 		if channelID == "" {
 			traqLogWarn("CHANNEL_VIEWERS_CHANGED skipped: empty channel id")
-			return nil, nil
+			return traqStreamEvent{}, nil
 		}
-		traqLogWS("CHANNEL_VIEWERS_CHANGED channelID=%s", channelID)
 		if s.viewerHub != nil {
 			s.viewerHub.publish(viewerSignal{ChannelID: channelID})
 		}
-		return nil, nil
+		if state == nil {
+			traqLogWS("CHANNEL_VIEWERS_CHANGED channelID=%s", channelID)
+			return traqStreamEvent{}, nil
+		}
+		channelName, ok := state.channelName(channelID)
+		if !ok {
+			traqLogWS("CHANNEL_VIEWERS_CHANGED channelID=%s skipped: unknown channel", channelID)
+			return traqStreamEvent{}, nil
+		}
+		rows := make([]viewerRow, 0, len(body.Viewers))
+		for _, viewer := range body.Viewers {
+			if viewer.UserID == "" {
+				continue
+			}
+			rows = append(rows, viewerRow{
+				UserID:      viewer.UserID,
+				ChannelID:   channelID,
+				ChannelName: channelName,
+				State:       viewer.State,
+				UpdatedAt:   viewer.UpdatedAt,
+			})
+		}
+		traqLogWS("CHANNEL_VIEWERS_CHANGED channelID=%s viewers=%d rows=%d", channelID, len(body.Viewers), len(rows))
+		return traqStreamEvent{ViewerUpdates: []viewerUpdate{{
+			Rows: rows,
+			SampledChannelIDs: map[string]bool{
+				channelID: true,
+			},
+		}}}, nil
 	default:
-		return nil, nil
+		return traqStreamEvent{}, nil
 	}
 }
 

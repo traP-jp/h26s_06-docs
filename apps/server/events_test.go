@@ -57,3 +57,44 @@ func TestTriggerPayloadAlwaysIncludesDelta(t *testing.T) {
 		t.Fatalf("payload = %s, want zero delta field", data)
 	}
 }
+
+func TestPublishViewerUpdatePublishesEmptySampledChannel(t *testing.T) {
+	hub := newEventHub()
+	events := hub.subscribe()
+	defer hub.unsubscribe(events)
+
+	published := publishViewerUpdate(
+		viewerUpdate{
+			SampledChannelIDs: map[string]bool{"active": true},
+		},
+		map[string]bool{"active": true, "other": true},
+		hub,
+	)
+	if !published {
+		t.Fatal("viewer update was not published")
+	}
+
+	event := <-events
+	if event.Name != "viewers" {
+		t.Fatalf("event.Name = %q, want viewers", event.Name)
+	}
+	var payload viewerSnapshotPayload
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if payload.Total != 0 {
+		t.Fatalf("Total = %d, want 0", payload.Total)
+	}
+	if payload.SampledChannels != 1 {
+		t.Fatalf("SampledChannels = %d, want 1", payload.SampledChannels)
+	}
+	if payload.TotalChannels != 2 {
+		t.Fatalf("TotalChannels = %d, want 2", payload.TotalChannels)
+	}
+	if len(payload.Channels) != 0 {
+		t.Fatalf("len(Channels) = %d, want 0", len(payload.Channels))
+	}
+	if len(payload.Recent) != 0 {
+		t.Fatalf("len(Recent) = %d, want 0", len(payload.Recent))
+	}
+}

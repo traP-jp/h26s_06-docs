@@ -68,9 +68,19 @@ type triggerPayload struct {
 	SourceDetail     string  `json:"-"`
 }
 
+type traqStreamEvent struct {
+	Triggers      []triggerPayload
+	ViewerUpdates []viewerUpdate
+}
+
 type syncPayload struct {
 	TS     int64              `json:"ts"`
 	Deltas map[string]float64 `json:"deltas"`
+}
+
+type viewerUpdate struct {
+	Rows              []viewerRow
+	SampledChannelIDs map[string]bool
 }
 
 type traqChannel struct {
