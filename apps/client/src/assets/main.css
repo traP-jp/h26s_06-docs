@@ -297,7 +297,7 @@ dd {
 .event-toast {
     position: relative;
     display: grid;
-    grid-template-columns: 7px minmax(0, 1fr) 22px;
+    grid-template-columns: minmax(0, 1fr) 22px;
     gap: 9px;
     align-items: center;
     overflow: hidden;
@@ -310,6 +310,30 @@ dd {
     box-shadow: 0 12px 42px rgb(0 0 0 / 28%);
     backdrop-filter: blur(18px);
     pointer-events: auto;
+}
+
+.event-toast__focus {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 7px minmax(0, 1fr);
+    gap: 9px;
+    align-items: center;
+    min-width: 0;
+    border: 0;
+    padding: 8px 39px 8px 10px;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+}
+
+.event-toast:has(> .event-toast__focus:focus-visible) {
+    border-color: rgb(117 202 255 / 72%);
+}
+
+.event-toast__focus:focus-visible {
+    outline: none;
 }
 
 .event-toast::before {
@@ -338,12 +362,9 @@ dd {
 }
 
 .event-toast__body {
-    min-width: 0;
-}
-
-.event-toast__body p {
+    display: block;
     overflow: hidden;
-    margin: 0;
+    min-width: 0;
     color: #adcae6;
     font-size: 11px;
     line-height: 1.35;
@@ -352,12 +373,17 @@ dd {
 }
 
 .event-toast__close {
+    position: relative;
+    z-index: 1;
+    grid-column: 2;
+    box-sizing: border-box;
     display: grid;
     place-items: center;
     width: 22px;
     height: 22px;
     border: 1px solid transparent;
     border-radius: 4px;
+    padding: 0;
     color: #7187a4;
     background: transparent;
     cursor: pointer;

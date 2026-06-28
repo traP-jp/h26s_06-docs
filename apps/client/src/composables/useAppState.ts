@@ -7,6 +7,7 @@ const EVENT_TOAST_DURATION_MS = 5200;
 
 interface EventToast {
     id: number;
+    channelId: string;
     tone: "message" | "move";
     detail: string;
 }
@@ -77,10 +78,11 @@ export function useAppState() {
         eventCount.value += 1;
         lastEvent.value =
             trigger.type === "msg"
-                ? `${channelName} にメッセージ`
-                : `${channelName} へユーザーが移動`;
+                ? `#${channelName} にメッセージ`
+                : `#${channelName} へユーザーが移動`;
         updatedAt.value = time;
         pushEventToast({
+            channelId: id ?? "",
             tone: trigger.type === "msg" ? "message" : "move",
             detail: lastEvent.value,
         });

@@ -189,6 +189,14 @@ function revealMessageNode(id: string): void {
     graph.value?.revealMessageNode(id);
 }
 
+function focusEventToast(channelId: string, toastId: number): void {
+    if (!channelId) return;
+    selectedId.value = channelId;
+    focusId.value = channelId;
+    focusRevision.value += 1;
+    dismissEventToast(toastId);
+}
+
 async function retryAuthentication() {
     if (isDemoMode) return;
     const authenticated = await refreshAuthentication();
@@ -477,13 +485,20 @@ onBeforeUnmount(() => {
                     class="event-toast"
                     :data-tone="toast.tone"
                 >
-                    <span
-                        class="event-toast__signal"
-                        aria-hidden="true"
-                    />
-                    <div class="event-toast__body">
-                        <p>{{ toast.detail }}</p>
-                    </div>
+                    <button
+                        type="button"
+                        class="event-toast__focus"
+                        :aria-label="`${toast.detail}のチャンネルにフォーカス`"
+                        @click="focusEventToast(toast.channelId, toast.id)"
+                    >
+                        <span
+                            class="event-toast__signal"
+                            aria-hidden="true"
+                        />
+                        <span class="event-toast__body">
+                            {{ toast.detail }}
+                        </span>
+                    </button>
                     <button
                         type="button"
                         class="event-toast__close"
