@@ -349,6 +349,11 @@ onBeforeUnmount(() => {
         <SettingsDrawer
             v-if="authState === 'authenticated'"
             v-model="settingsOpen"
+            :connection="connection"
+            :connection-label="connectionLabel"
+            :status="status"
+            :is-demo-mode="isDemoMode"
+            :current-user="currentUser"
         />
 
         <GalaxyCanvas
@@ -398,14 +403,7 @@ onBeforeUnmount(() => {
             <button @click="reloadPage">再読み込み</button>
         </div>
 
-        <AppTopBar
-            :auth-state="authState"
-            :connection="connection"
-            :connection-label="connectionLabel"
-            :status="status"
-            :is-demo-mode="isDemoMode"
-            :current-user="currentUser"
-        />
+        <AppTopBar />
 
         <AppMetrics
             v-if="authState === 'authenticated'"

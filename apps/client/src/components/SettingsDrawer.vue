@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { audioManager } from "../audio/audioManager";
 import { useAudioSettings } from "../composables/useAudioSettings";
+import type { AuthUser, ConnectionState } from "../types/api";
 
 const open = defineModel<boolean>({ required: true });
+defineProps<{
+    connection: ConnectionState;
+    connectionLabel: string;
+    status: string;
+    isDemoMode: boolean;
+    currentUser?: AuthUser;
+}>();
 
 const {
     muted,
@@ -201,6 +209,40 @@ function closeDrawer(): void {
                     初期値に戻す
                 </button>
             </section>
+
+            <footer class="settingsStatus">
+                <div
+                    class="connection"
+                    :data-state="connection"
+                >
+                    <span class="connection__dot" />
+                    <div>
+                        <strong>{{ connectionLabel }}</strong>
+                        <small>{{ status }}</small>
+                    </div>
+                </div>
+                <div
+                    v-if="isDemoMode"
+                    class="session-pill"
+                >
+                    <span class="session-pill__label">MODE</span>
+                    <strong>DEMO</strong>
+                </div>
+                <div
+                    v-else-if="currentUser"
+                    class="session-pill"
+                >
+                    <img
+                        v-if="currentUser.iconUrl"
+                        :src="currentUser.iconUrl"
+                        :alt="currentUser.displayName"
+                    />
+                    <div>
+                        <span class="session-pill__label">LOGGED IN</span>
+                        <strong>{{ currentUser.displayName }}</strong>
+                    </div>
+                </div>
+            </footer>
         </aside>
     </Transition>
 </template>
