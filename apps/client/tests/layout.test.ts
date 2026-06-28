@@ -88,6 +88,34 @@ function createChildHeatRepulsionTree(relativeScore: number): LayoutNode[] {
     return nodes;
 }
 
+function createFanoutTree(childCount: number): LayoutNode[] {
+    const nodes: LayoutNode[] = [];
+    const add = (parentIndex: number, depth: number, islandId: number) => {
+        const index = nodes.length;
+        nodes.push({
+            index,
+            parentIndex,
+            children: [],
+            depth,
+            islandId,
+            isLayoutActive: true,
+            isExpansionOrigin: false,
+            emphasis: 1,
+            relativeScore: 0,
+            x: 0,
+            y: 0,
+            z: 0,
+        });
+        if (parentIndex >= 0) nodes[parentIndex]?.children.push(index);
+        return index;
+    };
+
+    const grandRoot = add(-1, 0, -1);
+    const root = add(grandRoot, 1, 0);
+    for (let index = 0; index < childCount; index += 1) add(root, 2, 0);
+    return nodes;
+}
+
 function position(positions: Float32Array, index: number) {
     const offset = index * 3;
     return {
@@ -191,5 +219,35 @@ describe("calculateLayout", () => {
         ).toBeGreaterThan(
             distance(position(collapsedPositions, 1), position(collapsedPositions, 0))
         );
+        expect(
+            distance(position(allChannelPositions, 1), position(allChannelPositions, 0))
+        ).toBeGreaterThan(400);
+    });
+
+    test("caps dense child repulsion in all channel mode", () => {
+        const nodes = createFanoutTree(240);
+        const positions = calculateLayout(nodes, { displayMode: "all" });
+        const parent = position(positions, 1);
+        const childDistances = nodes
+            .slice(2)
+            .map(node => distance(position(positions, node.index), parent));
+
+        expect(Math.max(...childDistances)).toBeLessThanOrEqual(56.001);
+    });
+
+    test("spreads very dense children in every direction in all channel mode", () => {
+        const nodes = createFanoutTree(160);
+        const positions = calculateLayout(nodes, { displayMode: "all" });
+        const grandRoot = position(positions, 0);
+        const parent = position(positions, 1);
+        const outwardAxis = normalize(subtract(parent, grandRoot));
+        const childDots = nodes
+            .slice(2)
+            .map(node =>
+                dot(normalize(subtract(position(positions, node.index), parent)), outwardAxis)
+            );
+
+        expect(Math.min(...childDots)).toBeLessThan(-0.25);
+        expect(Math.max(...childDots)).toBeGreaterThan(0.25);
     });
 });

@@ -14,7 +14,10 @@ import type { ChannelDisplayMode } from "./channelGraph";
 const POSITION_COMPONENTS = 3;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const ROOT_SEPARATION = 55;
-const ALL_CHANNEL_ROOT_RADIUS = 340;
+const ALL_CHANNEL_ROOT_RADIUS = 460;
+const ALL_CHANNEL_CHILD_COUNT_CAP = 48;
+const ALL_CHANNEL_LINK_DISTANCE_CAP = 56;
+const ALL_CHANNEL_OMNIDIRECTIONAL_CHILD_THRESHOLD = 100;
 const MIN_OUTWARD_DOT = 0.001;
 const HEAT_REPULSION_STRENGTH = 34;
 
@@ -40,6 +43,7 @@ interface ForceNode extends SimulationNodeDatum {
     radius: number;
     emphasis: number;
     heatScore: number;
+    chargeScale: number;
 }
 
 interface ForceLinkDatum extends SimulationLinkDatum<ForceNode> {
@@ -92,7 +96,8 @@ export function calculateLayout(nodes: LayoutNode[], options: LayoutOptions = {}
         islandCenters,
         islandRoots,
         hierarchy,
-        positions
+        positions,
+        options.displayMode
     );
     const heatScores = aggregateHeatScores(activeNodes, hierarchy);
 
@@ -100,6 +105,7 @@ export function calculateLayout(nodes: LayoutNode[], options: LayoutOptions = {}
         const position = readPosition(positions, node.index);
         const emphasisScale = emphasisScaleFor(node.emphasis);
         const radius = (node.depth <= 1 ? 8 : Math.max(4, 7 - node.depth * 0.45)) * emphasisScale;
+        const siblingCount = hierarchy.childrenByParent.get(node.parentIndex)?.length ?? 1;
         const forceNode: ForceNode = {
             id: node.index,
             depth: node.depth,
@@ -107,6 +113,7 @@ export function calculateLayout(nodes: LayoutNode[], options: LayoutOptions = {}
             radius,
             emphasis: node.emphasis,
             heatScore: heatScores.get(node.index) ?? node.relativeScore,
+            chargeScale: chargeScaleForSiblingCount(siblingCount, options.displayMode),
             x: position.x,
             y: position.y,
             z: position.z,
@@ -129,7 +136,13 @@ export function calculateLayout(nodes: LayoutNode[], options: LayoutOptions = {}
         return forceNode;
     });
 
-    const links = createLinks(activeNodes, activeByIndex, islandRoots, hierarchy);
+    const links = createLinks(
+        activeNodes,
+        activeByIndex,
+        islandRoots,
+        hierarchy,
+        options.displayMode
+    );
     const simulationTicks = Math.min(120, Math.max(36, Math.floor(80_000 / activeNodes.length)));
 
     const simulation = forceSimulation(forceNodes, 3)
@@ -144,7 +157,7 @@ export function calculateLayout(nodes: LayoutNode[], options: LayoutOptions = {}
         .force(
             "charge",
             forceManyBody<ForceNode>()
-                .strength(node => -18 * node.radius)
+                .strength(node => -18 * node.radius * node.chargeScale)
                 .distanceMax(240)
                 .theta(1)
         )
@@ -179,6 +192,8 @@ export function calculateLayout(nodes: LayoutNode[], options: LayoutOptions = {}
     simulation.tick(simulationTicks);
     if (options.displayMode !== "all") {
         constrainDeepNodesOutward(forceNodes, activeNodes, activeByIndex);
+    } else {
+        capAllChannelEdgeDistances(forceNodes, activeNodes, activeByIndex, islandRoots);
     }
 
     for (const node of forceNodes) {
@@ -277,7 +292,8 @@ function seedMissingPositions(
     islandCenters: ReadonlyMap<number, Point>,
     islandRoots: ReadonlyMap<number, LayoutNode>,
     hierarchy: ActiveHierarchy,
-    positions: Float32Array
+    positions: Float32Array,
+    displayMode: ChannelDisplayMode = "collapsed"
 ) {
     const seeded = new Set<number>();
     const visiting = new Set<number>();
@@ -318,16 +334,20 @@ function seedMissingPositions(
                 const seededParentPosition = readPosition(positions, parent.index);
                 const activeChildren = hierarchy.childrenByParent.get(parent.index) ?? [];
                 const ordinal = hierarchy.ordinalByChild.get(node.index) ?? 0;
-                const direction = outwardDirection(
+                const direction = childDirection(
                     ordinal,
                     activeChildren.length,
                     parent.index,
-                    branchAxis(parent, activeByIndex, positions)
+                    branchAxis(parent, activeByIndex, positions),
+                    displayMode
                 );
                 const childCount = hierarchy.childrenByParent.get(node.index)?.length ?? 0;
                 const distance =
-                    branchDistance(activeChildren.length, childCount) *
-                    emphasisScaleFor(node.emphasis);
+                    cappedBranchDistance(
+                        effectiveChildCount(activeChildren.length, displayMode),
+                        effectiveChildCount(childCount, displayMode),
+                        displayMode
+                    ) * emphasisScaleFor(node.emphasis);
                 setPosition(
                     positions,
                     node.index,
@@ -367,6 +387,31 @@ function outwardDirection(ordinal: number, count: number, seed: number, axis: Po
         z:
             axis.z * axialScale +
             (tangent.z * Math.cos(angle) + bitangent.z * Math.sin(angle)) * radialScale,
+    };
+}
+
+function childDirection(
+    ordinal: number,
+    count: number,
+    seed: number,
+    axis: Point,
+    displayMode: ChannelDisplayMode
+) {
+    if (displayMode === "all" && count > ALL_CHANNEL_OMNIDIRECTIONAL_CHILD_THRESHOLD) {
+        return sphericalDirection(ordinal, count, seed);
+    }
+    return outwardDirection(ordinal, count, seed, axis);
+}
+
+function sphericalDirection(ordinal: number, count: number, seed: number): Point {
+    const safeCount = Math.max(1, count);
+    const y = 1 - (2 * (ordinal + 0.5)) / safeCount;
+    const horizontalRadius = Math.sqrt(Math.max(0, 1 - y * y));
+    const angle = (ordinal + pseudoRandom(seed) * safeCount) * GOLDEN_ANGLE;
+    return {
+        x: Math.cos(angle) * horizontalRadius,
+        y,
+        z: Math.sin(angle) * horizontalRadius,
     };
 }
 
@@ -440,6 +485,34 @@ function constrainDeepNodesOutward(
     }
 }
 
+function capAllChannelEdgeDistances(
+    forceNodes: ForceNode[],
+    activeNodes: LayoutNode[],
+    activeByIndex: ReadonlyMap<number, LayoutNode>,
+    islandRoots: ReadonlyMap<number, LayoutNode>
+) {
+    const forceByID = new Map(forceNodes.map(node => [node.id, node]));
+    const sortedNodes = [...activeNodes].sort((left, right) => left.depth - right.depth);
+    for (const node of sortedNodes) {
+        const parent = activeByIndex.get(node.parentIndex);
+        const forceNode = forceByID.get(node.index);
+        const forceParent = parent ? forceByID.get(parent.index) : undefined;
+        if (!parent || !forceNode || !forceParent) continue;
+        if (node.index === islandRoots.get(node.islandId)?.index) continue;
+
+        const parentPosition = pointFromForce(forceParent);
+        const nodePosition = pointFromForce(forceNode);
+        const displacement = subtract(nodePosition, parentPosition);
+        const edgeDistance = Math.sqrt(lengthSquared(displacement));
+        if (edgeDistance <= ALL_CHANNEL_LINK_DISTANCE_CAP || edgeDistance < 0.001) continue;
+
+        const scaleFactor = ALL_CHANNEL_LINK_DISTANCE_CAP / edgeDistance;
+        forceNode.x = parentPosition.x + displacement.x * scaleFactor;
+        forceNode.y = parentPosition.y + displacement.y * scaleFactor;
+        forceNode.z = parentPosition.z + displacement.z * scaleFactor;
+    }
+}
+
 function outwardAxisFromGrandParent(
     parentPosition: Point,
     grandParentPosition: Point,
@@ -459,7 +532,8 @@ function createLinks(
     activeNodes: LayoutNode[],
     activeByIndex: ReadonlyMap<number, LayoutNode>,
     islandRoots: ReadonlyMap<number, LayoutNode>,
-    hierarchy: ActiveHierarchy
+    hierarchy: ActiveHierarchy,
+    displayMode: ChannelDisplayMode = "collapsed"
 ) {
     const links: ForceLinkDatum[] = [];
     for (const node of activeNodes) {
@@ -469,15 +543,23 @@ function createLinks(
             if (!child || child.index === islandRoots.get(child.islandId)?.index) continue;
 
             const childCount = hierarchy.childrenByParent.get(child.index)?.length ?? 0;
+            const effectiveSiblingCount = effectiveChildCount(activeChildren.length, displayMode);
+            const effectiveChildCountValue = effectiveChildCount(childCount, displayMode);
             links.push({
                 source: node.index,
                 target: child.index,
                 desiredDistance:
-                    branchDistance(activeChildren.length, childCount) *
-                    emphasisScaleFor(child.emphasis),
+                    cappedBranchDistance(
+                        effectiveSiblingCount,
+                        effectiveChildCountValue,
+                        displayMode
+                    ) * emphasisScaleFor(child.emphasis),
                 strength: Math.max(
                     0.45,
-                    Math.min(0.9, 0.68 - child.depth * 0.035 + Math.log2(childCount + 1) * 0.04)
+                    Math.min(
+                        0.9,
+                        0.68 - child.depth * 0.035 + Math.log2(effectiveChildCountValue + 1) * 0.04
+                    )
                 ),
             });
         }
@@ -493,6 +575,24 @@ function branchDistance(siblingCount: number, childCount: number) {
     const siblingSpread = Math.min(18, Math.log2(siblingCount + 1) * 3.5);
     const subtreeSpread = Math.min(24, Math.log2(childCount + 1) * 4);
     return 20 + siblingSpread + subtreeSpread;
+}
+
+function cappedBranchDistance(
+    siblingCount: number,
+    childCount: number,
+    displayMode: ChannelDisplayMode
+) {
+    const distance = branchDistance(siblingCount, childCount);
+    return displayMode === "all" ? Math.min(distance, ALL_CHANNEL_LINK_DISTANCE_CAP) : distance;
+}
+
+function effectiveChildCount(count: number, displayMode: ChannelDisplayMode) {
+    return displayMode === "all" ? Math.min(count, ALL_CHANNEL_CHILD_COUNT_CAP) : count;
+}
+
+function chargeScaleForSiblingCount(count: number, displayMode: ChannelDisplayMode = "collapsed") {
+    if (displayMode !== "all" || count <= ALL_CHANNEL_CHILD_COUNT_CAP) return 1;
+    return ALL_CHANNEL_CHILD_COUNT_CAP / count;
 }
 
 function pseudoRandom(seed: number) {
