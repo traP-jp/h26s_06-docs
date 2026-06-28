@@ -26,6 +26,10 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
 import { calculateCameraAvoidance } from "../core/cameraAvoidance";
+import {
+    calculateFramedCameraDistance,
+    type CameraFramePoint,
+} from "../core/cameraFraming";
 import type { ChannelGraph } from "../core/channelGraph";
 import { NodeBuffer } from "../core/nodeBuffer";
 import { EffectPool } from "../rendering/effectPool";
@@ -59,6 +63,7 @@ let cameraTransition:
           direction: Vector3;
           distance: number;
           positionOffset: Vector3;
+          framingNodeIds: string[];
           nodeId: string;
       }
     | undefined;
@@ -345,6 +350,7 @@ function updateCameraTarget(id: string | undefined) {
             direction,
             distance: 800,
             positionOffset: new Vector3(),
+            framingNodeIds: [],
             nodeId: "grand_root",
         };
         return;
@@ -357,10 +363,13 @@ function updateCameraTarget(id: string | undefined) {
     direction.normalize();
 
     let descendantsCount = 0;
+    const framingNodes = new Map<string, ChannelGraph["nodes"][number]>();
+    framingNodes.set(node.id, node);
     const countTraverse = (index: number, level: number) => {
         if (level > 2) return;
         const descendant = props.graph.nodes[index];
         if (!descendant) return;
+        framingNodes.set(descendant.id, descendant);
         descendantsCount += 1;
         for (const childIndex of descendant.children) countTraverse(childIndex, level + 1);
     };
@@ -368,8 +377,11 @@ function updateCameraTarget(id: string | undefined) {
 
     const estimatedRadius = Math.max(30, Math.sqrt(descendantsCount) * 16);
     const requiredDistance = estimatedRadius * 2.8 + 120;
-    const distance = Math.max(requiredDistance, camera.position.distanceTo(controls.target) * 0.7);
     const target = new Vector3(node.targetX, node.targetY, node.targetZ);
+    const currentDistance = camera.position.distanceTo(controls.target);
+    const framingNodeIds = [...framingNodes.keys()];
+    const minimumDistance = Math.max(requiredDistance, currentDistance * 0.7);
+    let distance = calculateFocusDistance(node, direction, framingNodeIds, minimumDistance);
     const basePosition = target.clone().addScaledVector(direction, distance);
     const pathIds = new Set(props.graph.path(id).map(pathNode => pathNode.id));
     const obstacles = props.graph.nodes
@@ -397,6 +409,8 @@ function updateCameraTarget(id: string | undefined) {
         })),
         obstacles
     );
+    const positionOffset = new Vector3(offset.x, offset.y, offset.z);
+    distance = calculateFocusDistance(node, direction, framingNodeIds, distance, positionOffset);
 
     cameraTransition = {
         startedAt: performance.now(),
@@ -404,7 +418,8 @@ function updateCameraTarget(id: string | undefined) {
         startTarget: controls.target.clone(),
         direction,
         distance,
-        positionOffset: new Vector3(offset.x, offset.y, offset.z),
+        positionOffset,
+        framingNodeIds,
         nodeId: id,
     };
 }
@@ -418,6 +433,69 @@ function cameraObstacleRadius(node: ChannelGraph["nodes"][number]) {
               ? 3
               : Math.max(0.42, 2.4 * 0.72 ** (node.depth - 1));
     return (baseScale + heat * 6) * node.emphasis * node.visibilityAlpha;
+}
+
+function nodeFramePoint(node: ChannelGraph["nodes"][number]): CameraFramePoint {
+    return {
+        position: {
+            x: node.targetX,
+            y: node.targetY,
+            z: node.targetZ,
+        },
+        radius: Math.max(10, cameraObstacleRadius(node) * 2.6),
+    };
+}
+
+function calculateFocusDistance(
+    node: ChannelGraph["nodes"][number],
+    direction: Vector3,
+    framingNodeIds: readonly string[],
+    minimumDistance: number,
+    positionOffset?: Vector3
+) {
+    if (!camera || !controls) return minimumDistance;
+    const framePoints = framingNodeIds
+        .map(nodeId => props.graph.get(nodeId))
+        .filter(
+            (framingNode): framingNode is ChannelGraph["nodes"][number] =>
+                Boolean(framingNode) &&
+                (framingNode.visibilityAlpha > 0.05 || framingNode.id === node.id)
+        )
+        .map(nodeFramePoint);
+    let framedDistance = calculateFramedCameraDistance(
+        { x: node.targetX, y: node.targetY, z: node.targetZ },
+        framePoints,
+        {
+            cameraDirection: direction,
+            verticalFovDegrees: camera.fov,
+            aspect: camera.aspect,
+            minimumDistance,
+        }
+    );
+    if (positionOffset && positionOffset.lengthSq() > 0.001) {
+        const shiftedDirection = direction
+            .clone()
+            .multiplyScalar(framedDistance)
+            .add(positionOffset)
+            .normalize();
+        framedDistance = calculateFramedCameraDistance(
+            { x: node.targetX, y: node.targetY, z: node.targetZ },
+            framePoints,
+            {
+                cameraDirection: shiftedDirection,
+                verticalFovDegrees: camera.fov,
+                aspect: camera.aspect,
+                minimumDistance: framedDistance,
+            }
+        );
+    }
+
+    if (framedDistance > controls.maxDistance) controls.maxDistance = framedDistance;
+    if (framedDistance * 1.2 > camera.far) {
+        camera.far = framedDistance * 1.2;
+        camera.updateProjectionMatrix();
+    }
+    return framedDistance;
 }
 
 function calculatePathAvoidance(
@@ -467,9 +545,16 @@ function updateCameraTransition(now: number) {
     }
 
     const target = new Vector3(node.targetX, node.targetY, node.targetZ);
+    const distance = calculateFocusDistance(
+        node,
+        cameraTransition.direction,
+        cameraTransition.framingNodeIds,
+        cameraTransition.distance,
+        cameraTransition.positionOffset
+    );
     const position = target
         .clone()
-        .addScaledVector(cameraTransition.direction, cameraTransition.distance)
+        .addScaledVector(cameraTransition.direction, distance)
         .add(cameraTransition.positionOffset);
 
     camera.position.lerpVectors(cameraTransition.startPosition, position, eased);
