@@ -1132,12 +1132,12 @@ dd {
 
 .shortcutsButton {
     width: 100%;
-    min-height: 42px;
+    padding: 10px 12px;
     border: 1px solid rgb(140 190 255 / 16%);
     background: rgb(97 152 214 / 10%);
     color: #adcae6;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 10px;
     letter-spacing: 0.16em;
     text-transform: uppercase;
 }
