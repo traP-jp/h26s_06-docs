@@ -4,6 +4,9 @@ import type { ChannelDisplayMode, ChannelGraph, ChannelNode } from "../core/chan
 import type { ConnectionState, TriggerPayload } from "../types/api";
 
 const EVENT_TOAST_DURATION_MS = 5200;
+const DISPLAY_PRESET_STORAGE_KEY = "qosmos.displayPreset";
+
+type DisplayPreset = "all" | "normal" | "active";
 
 interface EventToast {
     id: number;
@@ -25,14 +28,44 @@ export type SelectedChannel = ChannelNode & {
     navigation: NavigationTargets;
 };
 
+function readDisplayPreset(): DisplayPreset {
+    try {
+        if (typeof localStorage === "undefined") return "normal";
+
+        const preset = localStorage.getItem(DISPLAY_PRESET_STORAGE_KEY);
+        if (preset === "all" || preset === "normal" || preset === "active") return preset;
+    } catch {
+        // localStorage may be unavailable in restricted browser contexts.
+    }
+
+    return "normal";
+}
+
+function writeDisplayPreset(preset: DisplayPreset) {
+    try {
+        if (typeof localStorage === "undefined") return;
+        localStorage.setItem(DISPLAY_PRESET_STORAGE_KEY, preset);
+    } catch {
+        // Display switching should continue even when persistence is unavailable.
+    }
+}
+
+function displayPresetFor(displayMode: ChannelDisplayMode, activeOnly: boolean): DisplayPreset {
+    if (displayMode === "all") return "all";
+    return activeOnly ? "active" : "normal";
+}
+
 export function useAppState() {
     // ChannelGraph は毎フレーム自身を更新するため、Vue の深い監視から除外する。
+    const initialDisplayPreset = readDisplayPreset();
     const graph = shallowRef<ChannelGraph>();
     const connection = ref<ConnectionState>("connecting");
     const status = ref("デモサーバーへ接続中");
     const selectedId = ref<string>();
-    const activeOnly = ref(false);
-    const displayMode = ref<ChannelDisplayMode>("collapsed");
+    const activeOnly = ref(initialDisplayPreset === "active");
+    const displayMode = ref<ChannelDisplayMode>(
+        initialDisplayPreset === "all" ? "all" : "collapsed"
+    );
     const eventCount = ref(0);
     const lastEvent = ref("初期データを待っています");
     const updatedAt = ref("");
@@ -145,6 +178,10 @@ export function useAppState() {
             ...rememberedChildByParent.value,
             [node.parentId]: node.id,
         };
+    });
+
+    watch([displayMode, activeOnly], ([mode, active]) => {
+        writeDisplayPreset(displayPresetFor(mode, active));
     });
 
     return {
