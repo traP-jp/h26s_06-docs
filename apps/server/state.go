@@ -14,14 +14,15 @@ const (
 	recentMessageIDLimit = 100
 	maxSyncPayloadDeltas = 100
 
-	messageScoreAmount    = 1.0
-	movementScoreAmount   = 0.25
-	ancestorScoreFactor   = 0.45
-	scoreDecayTimeScale   = 300.0
-	messageCountTimeScale = 300.0
-	minMessageCount       = 0.01
-	syncDeltaWeightScale  = 10.0
-	viewerScoreWeight     = 0.46
+  messageScoreAmount         = 1.0
+  messageScoreReferenceChars = 20
+  movementScoreAmount        = 0.025
+  ancestorScoreFactor        = 0.45
+  scoreDecayTimeScale        = 300.0
+  messageCountTimeScale      = 300.0
+  minMessageCount            = 0.01
+  syncDeltaWeightScale       = 10.0
+  viewerScoreWeight          = 0.46
 )
 
 type channel struct {
@@ -363,7 +364,9 @@ func messageScoreDelta(trigger triggerPayload) float64 {
 	if trigger.MessageLength <= 0 {
 		return 0
 	}
-	return messageScoreAmount * math.Log1p(float64(trigger.MessageLength))
+	return messageScoreAmount *
+		math.Log1p(float64(trigger.MessageLength)) /
+		math.Log1p(float64(messageScoreReferenceChars))
 }
 
 func (sm *stateManager) messageScoreDeltaLocked(trigger triggerPayload, now time.Time) float64 {

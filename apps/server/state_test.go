@@ -49,6 +49,37 @@ func TestStateManagerApplyTriggerSkipsDuplicateMovement(t *testing.T) {
 	}
 }
 
+func TestStateManagerApplyTriggerAddsMovementScore(t *testing.T) {
+	parentID := "root"
+	state, err := newStateManagerFromTraq([]traqChannel{
+		{ID: parentID, Name: "root"},
+		{ID: "child", Name: "child", ParentID: &parentID},
+	})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	applied, ok := state.applyTrigger(triggerPayload{Type: "mov", Usr: "u1", To: "child"})
+	if !ok {
+		t.Fatal("movement was not applied")
+	}
+	if applied.ScoreDelta != movementScoreAmount {
+		t.Fatalf("delta = %v, want %v", applied.ScoreDelta, movementScoreAmount)
+	}
+
+	state.mu.RLock()
+	childScore := state.channels["child"].Score
+	parentScore := state.channels[parentID].Score
+	state.mu.RUnlock()
+	if childScore != movementScoreAmount {
+		t.Fatalf("child score = %v, want %v", childScore, movementScoreAmount)
+	}
+	wantParentScore := movementScoreAmount * ancestorScoreFactor
+	if math.Abs(parentScore-wantParentScore) > 0.000_001 {
+		t.Fatalf("parent score = %v, want %v", parentScore, wantParentScore)
+	}
+}
+
 func TestStateManagerApplyTriggerClearsCurrentChannelWithoutPublishing(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{
 		{ID: "a", Name: "a"},
@@ -189,14 +220,14 @@ func TestStateManagerApplyTriggerUsesMessageLengthScoreDelta(t *testing.T) {
 		Type:             "msg",
 		Ch:               "root",
 		MessageID:        "message-1",
-		MessageLength:    10,
+		MessageLength:    messageScoreReferenceChars,
 		HasMessageLength: true,
 	})
 	if !ok {
 		t.Fatal("message was not applied")
 	}
 
-	want := messageScoreAmount * math.Log1p(10)
+	want := messageScoreAmount
 	if applied.ScoreDelta != want {
 		t.Fatalf("delta = %v, want %v", applied.ScoreDelta, want)
 	}
@@ -217,19 +248,50 @@ func TestStateManagerApplyTriggerReducesRepeatedMessageScoreByUserAndChannel(t *
 		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
 	}
 
-	first, ok := state.applyTrigger(triggerPayload{Type: "msg", Ch: "root", MessageID: "message-1", MessageUserID: "user-1"})
+	first, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-1",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
 	if !ok {
 		t.Fatal("first message was not applied")
 	}
-	second, ok := state.applyTrigger(triggerPayload{Type: "msg", Ch: "root", MessageID: "message-2", MessageUserID: "user-1"})
+
+	second, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-2",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
 	if !ok {
 		t.Fatal("second message was not applied")
 	}
-	otherUser, ok := state.applyTrigger(triggerPayload{Type: "msg", Ch: "root", MessageID: "message-3", MessageUserID: "user-2"})
+
+	otherUser, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-3",
+		MessageUserID:    "user-2",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
 	if !ok {
 		t.Fatal("other user message was not applied")
 	}
-	otherChannel, ok := state.applyTrigger(triggerPayload{Type: "msg", Ch: "other", MessageID: "message-4", MessageUserID: "user-1"})
+
+	otherChannel, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "other",
+		MessageID:        "message-4",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
 	if !ok {
 		t.Fatal("other channel message was not applied")
 	}
@@ -259,7 +321,14 @@ func TestStateManagerMessageScoreReductionDecaysOverTime(t *testing.T) {
 	state.storeMessageCountLocked("root", "user-1", 4, now.Add(-messageCountTimeScale*time.Second))
 	state.mu.Unlock()
 
-	applied, ok := state.applyTrigger(triggerPayload{Type: "msg", Ch: "root", MessageID: "message-1", MessageUserID: "user-1"})
+	applied, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-1",
+		MessageUserID:    "user-1",
+		MessageLength:    messageScoreReferenceChars,
+		HasMessageLength: true,
+	})
 	if !ok {
 		t.Fatal("message was not applied")
 	}
@@ -287,9 +356,58 @@ func TestStateManagerSyncPayloadDecaysMessageCounts(t *testing.T) {
 	state.mu.RLock()
 	got := state.messageCounts["root"]["user-1"].Count
 	state.mu.RUnlock()
+
 	want := 4 * math.Exp(-1)
 	if math.Abs(got-want) > 0.01 {
 		t.Fatalf("message count = %v, want about %v", got, want)
+	}
+}
+
+func TestMessageScoreDeltaUsesReferenceCharacterCount(t *testing.T) {
+	tests := []struct {
+		name   string
+		length int
+		want   float64
+	}{
+		{
+			name:   "empty",
+			length: 0,
+			want:   0,
+		},
+		{
+			name:   "single character",
+			length: 1,
+			want: messageScoreAmount *
+				math.Log1p(1) /
+				math.Log1p(float64(messageScoreReferenceChars)),
+		},
+		{
+			name:   "shorter than reference",
+			length: 10,
+			want: messageScoreAmount *
+				math.Log1p(10) /
+				math.Log1p(float64(messageScoreReferenceChars)),
+		},
+		{
+			name:   "reference length",
+			length: messageScoreReferenceChars,
+			want:   messageScoreAmount,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			trigger := triggerPayload{
+				Type:             "msg",
+				Ch:               "root",
+				MessageLength:    tt.length,
+				HasMessageLength: true,
+			}
+
+			if got := messageScoreDelta(trigger); got != tt.want {
+				t.Fatalf("messageScoreDelta() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

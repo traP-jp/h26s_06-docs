@@ -22,12 +22,14 @@ import type { AuthUser } from "./types/api";
 type AuthState = "checking" | "authenticated" | "error" | "forbidden";
 
 const isDemoMode = new URLSearchParams(window.location.search).get("demo") === "1";
+const SELECTED_LAYOUT_DEBOUNCE_MS = 120;
 
 let stream: EventStream | undefined;
 let pendingGraph: ChannelGraph | undefined;
 let layoutGeneration = 0;
 let mounted = false;
 let authGeneration = 0;
+let selectedLayoutTimer: ReturnType<typeof setTimeout> | undefined;
 
 const {
     graph,
@@ -93,12 +95,34 @@ const keyboardController = new KeyboardController({
 const keyboardManager = new KeyboardManager(keyboardController);
 
 function scheduleLayout(targetGraph: ChannelGraph): void {
+    clearSelectedLayoutTimer();
     const generation = ++layoutGeneration;
     calculateChannelLayout(targetGraph.nodes).then(positions => {
         if (generation === layoutGeneration && graph.value === targetGraph) {
             targetGraph.applyLayout(positions);
         }
     });
+}
+
+function clearSelectedLayoutTimer(): void {
+    if (!selectedLayoutTimer) return;
+    clearTimeout(selectedLayoutTimer);
+    selectedLayoutTimer = undefined;
+}
+
+function scheduleSelectedLayout(targetGraph: ChannelGraph, isClosingSelection: boolean): void {
+    const generation = ++layoutGeneration;
+    clearSelectedLayoutTimer();
+    selectedLayoutTimer = setTimeout(() => {
+        selectedLayoutTimer = undefined;
+        calculateChannelLayout(targetGraph.nodes).then(positions => {
+            if (generation === layoutGeneration && graph.value === targetGraph) {
+                targetGraph.applyLayout(positions);
+                if (!isClosingSelection) audioManager.playBloom();
+                if (focusId.value) focusRevision.value += 1;
+            }
+        });
+    }, SELECTED_LAYOUT_DEBOUNCE_MS);
 }
 
 function revealMessageNode(id: string): void {
@@ -119,6 +143,7 @@ function stopStream(clearGraph: boolean) {
     stream?.disconnect();
     stream = undefined;
     if (clearGraph) {
+        clearSelectedLayoutTimer();
         resetActivity();
     }
 }
@@ -276,17 +301,10 @@ watch(selectedId, (newId, oldId) => {
     const isClosingSelection = !newId && Boolean(oldId);
 
     if (changed) {
-        const generation = ++layoutGeneration;
         if (isClosingSelection) {
             audioManager.playClose();
         }
-        calculateChannelLayout(graph.value.nodes).then(positions => {
-            if (generation === layoutGeneration) {
-                graph.value?.applyLayout(positions);
-                if (!isClosingSelection) audioManager.playBloom();
-                if (focusId.value) focusRevision.value += 1;
-            }
-        });
+        scheduleSelectedLayout(graph.value, isClosingSelection);
     }
 });
 
@@ -294,6 +312,7 @@ onBeforeUnmount(() => {
     keyboardManager.stop();
     mounted = false;
     authGeneration += 1;
+    clearSelectedLayoutTimer();
     stopStream(false);
 });
 </script>
