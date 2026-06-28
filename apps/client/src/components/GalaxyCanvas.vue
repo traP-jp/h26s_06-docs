@@ -13,7 +13,6 @@ import {
     LineSegments,
     MeshBasicMaterial,
     PerspectiveCamera,
-    Quaternion,
     SRGBColorSpace,
     Scene,
     SphereGeometry,
@@ -26,10 +25,9 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
-import { calculateCameraAvoidance } from "../core/cameraAvoidance";
-import { calculateCameraFrame } from "../core/cameraFraming";
 import type { ChannelGraph } from "../core/channelGraph";
 import { NodeBuffer } from "../core/nodeBuffer";
+import { CameraController } from "../rendering/cameraController";
 import { EffectPool } from "../rendering/effectPool";
 
 const props = defineProps<{
@@ -53,23 +51,12 @@ let renderer: WebGLRenderer | undefined;
 let scene: Scene | undefined;
 let camera: PerspectiveCamera | undefined;
 let controls: OrbitControls | undefined;
+let cameraController: CameraController | undefined;
 let composer: EffectComposer | undefined;
 let effects: EffectPool | undefined;
 let nodes: InstancedMesh | undefined;
 let hierarchyEdges: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let selectionPath: Line<BufferGeometry, LineBasicMaterial> | undefined;
-let cameraTransition:
-    | {
-          startedAt: number;
-          startPosition: Vector3;
-          startTarget: Vector3;
-          direction: Vector3;
-          distance: number;
-          targetOffset: Vector3;
-          positionOffset: Vector3;
-          nodeId: string;
-      }
-    | undefined;
 let frame = 0;
 let lastFrame = performance.now();
 let pointerDown = new Vector2();
@@ -81,11 +68,8 @@ let hoverPending = false;
 let resizeObserver: ResizeObserver | undefined;
 let nodeBuffer = new NodeBuffer(props.graph.nodes.length);
 const projectedNode = new Vector3();
-const projectedRotationCenter = new Vector3();
-const desiredRotationCenter = new Vector3();
 const hoverPointer = new Vector2();
 const instanceColor = new Color();
-const ROTATION_CENTER_VIEWPORT_LIMIT = 0.92;
 const NODE_PICK_RADIUS = 28;
 
 function initialise() {
@@ -120,6 +104,7 @@ function initialise() {
         controls.minDistance = 80;
         controls.maxDistance = Math.max(1400, initialDistance * 2.5);
         controls.enablePan = true;
+        cameraController = new CameraController(camera, controls);
 
         nodes = createNodeMesh();
         scene.add(nodes);
@@ -320,7 +305,7 @@ function draw(now: number) {
     updateEdges(now);
     updateSelectionPathPositions(now);
     if (hierarchyEdges) hierarchyEdges.visible = !props.activeOnly;
-    updateCameraTransition(now);
+    cameraController?.updateTransition(props.graph, now);
     if (!customRotationActive) controls?.update();
     constrainRotationCenterToViewport();
     updateHoverCursor();
@@ -362,7 +347,7 @@ function resize() {
 }
 
 function onPointerDown(event: PointerEvent) {
-    if (props.focusId) cameraTransition = undefined;
+    if (props.focusId) cameraController?.cancelTransition();
     pointerDown.set(event.clientX, event.clientY);
     pointerLast.copy(pointerDown);
     pointerMoved = false;
@@ -372,134 +357,13 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function centerInitialCamera() {
-    if (!camera || !controls) return;
     const root = props.graph.get("grand_root");
     if (!root) return;
-
-    const distance = camera.position.distanceTo(controls.target);
-    controls.target.set(root.x, root.y, root.z);
-    camera.position.set(root.x, root.y, root.z + distance);
-    camera.lookAt(controls.target);
-    controls.update();
-    cameraTransition = undefined;
+    cameraController?.centerAt(root);
 }
 
 function updateCameraTarget(id: string | undefined) {
-    if (!camera || !controls) return;
-
-    if (!id) {
-        const direction = camera.position.clone().sub(controls.target);
-        if (direction.lengthSq() < 0.001) direction.set(0, 0, 1);
-        direction.normalize();
-        cameraTransition = {
-            startedAt: performance.now(),
-            startPosition: camera.position.clone(),
-            startTarget: controls.target.clone(),
-            direction,
-            distance: 800,
-            targetOffset: new Vector3(),
-            positionOffset: new Vector3(),
-            nodeId: "grand_root",
-        };
-        return;
-    }
-
-    const node = props.graph.get(id);
-    if (!node) return;
-    const direction = camera.position.clone().sub(controls.target);
-    if (direction.lengthSq() < 0.001) direction.set(0, 0, 1);
-    direction.normalize();
-
-    const expandedNodes = [
-        node,
-        ...node.children
-            .map(index => props.graph.nodes[index])
-            .filter(
-                (child): child is ChannelGraph["nodes"][number] =>
-                    child !== undefined && child.isLayoutActive
-            ),
-    ];
-    const frame = calculateCameraFrame(
-        expandedNodes.map(expandedNode => ({
-            x: expandedNode.targetX,
-            y: expandedNode.targetY,
-            z: expandedNode.targetZ,
-        })),
-        direction,
-        camera.fov,
-        camera.aspect,
-        { x: node.targetX, y: node.targetY, z: node.targetZ }
-    );
-    const distance = frame.distance;
-    const target = new Vector3(frame.target.x, frame.target.y, frame.target.z);
-    const targetOffset = target.clone().sub(new Vector3(node.targetX, node.targetY, node.targetZ));
-    const basePosition = target.clone().addScaledVector(direction, distance);
-    const pathIds = new Set(props.graph.path(id).map(pathNode => pathNode.id));
-    const obstacles = props.graph.nodes
-        .filter(
-            candidate =>
-                !pathIds.has(candidate.id) &&
-                candidate.visibilityAlpha > 0.15 &&
-                candidate.isLayoutActive
-        )
-        .map(candidate => ({
-            position: {
-                x: candidate.targetX,
-                y: candidate.targetY,
-                z: candidate.targetZ,
-            },
-            radius: cameraObstacleRadius(candidate),
-        }))
-        .filter(obstacle => obstacle.radius >= 4.5);
-    const offset = calculatePathAvoidance(
-        basePosition,
-        props.graph.path(id).map(pathNode => ({
-            x: pathNode.targetX,
-            y: pathNode.targetY,
-            z: pathNode.targetZ,
-        })),
-        obstacles
-    );
-
-    cameraTransition = {
-        startedAt: performance.now(),
-        startPosition: camera.position.clone(),
-        startTarget: controls.target.clone(),
-        direction,
-        distance,
-        targetOffset,
-        positionOffset: new Vector3(offset.x, offset.y, offset.z),
-        nodeId: id,
-    };
-}
-
-function cameraObstacleRadius(node: ChannelGraph["nodes"][number]) {
-    const heat = node.relativeScore;
-    const baseScale =
-        node.id === "grand_root"
-            ? 4.2
-            : node.depth <= 1
-              ? 3
-              : Math.max(0.42, 2.4 * 0.72 ** (node.depth - 1));
-    return (baseScale + heat * 6) * node.emphasis * node.visibilityAlpha;
-}
-
-function calculatePathAvoidance(
-    cameraPosition: { x: number; y: number; z: number },
-    path: readonly { x: number; y: number; z: number }[],
-    obstacles: Parameters<typeof calculateCameraAvoidance>[2]
-) {
-    let strongest = { x: 0, y: 0, z: 0 };
-    let strongestLength = 0;
-    for (const pathNode of path) {
-        const offset = calculateCameraAvoidance(cameraPosition, pathNode, obstacles);
-        const length = Math.hypot(offset.x, offset.y, offset.z);
-        if (length > strongestLength) {
-            strongest = offset;
-            strongestLength = length;
-        }
-    }
-    return strongest;
+    cameraController?.focus(props.graph, id);
 }
 
 function updateSelectionPath(id: string | undefined) {
@@ -535,31 +399,6 @@ function selectionPathColors(path: ChannelGraph["nodes"][number][]) {
     return colors;
 }
 
-function updateCameraTransition(now: number) {
-    if (!cameraTransition || !camera || !controls) return;
-    const progress = Math.min(1, (now - cameraTransition.startedAt) / 720);
-    const eased = 1 - (1 - progress) ** 3;
-
-    const node = props.graph.get(cameraTransition.nodeId);
-    if (!node) {
-        cameraTransition = undefined;
-        return;
-    }
-
-    const target = new Vector3(node.targetX, node.targetY, node.targetZ).add(
-        cameraTransition.targetOffset
-    );
-    const position = target
-        .clone()
-        .addScaledVector(cameraTransition.direction, cameraTransition.distance)
-        .add(cameraTransition.positionOffset);
-
-    camera.position.lerpVectors(cameraTransition.startPosition, position, eased);
-    controls.target.lerpVectors(cameraTransition.startTarget, target, eased);
-
-    if (progress >= 1) cameraTransition = undefined;
-}
-
 function onPointerMove(event: PointerEvent) {
     const deltaX = event.clientX - pointerLast.x;
     const deltaY = event.clientY - pointerLast.y;
@@ -580,63 +419,21 @@ function onPointerMove(event: PointerEvent) {
 
 function rotateAroundSelectedNode(deltaX: number, deltaY: number) {
     const element = renderer?.domElement;
-    if (!element || !camera || !controls) return;
+    if (!element) return;
     const pivotNode = props.focusId
         ? props.graph.get(props.focusId)
         : props.graph.get("grand_root");
     if (!pivotNode) return;
-
-    const pivot = new Vector3(pivotNode.x, pivotNode.y, pivotNode.z);
-    const worldUp = camera.up.clone().normalize();
-    const rotationScale = (Math.PI * 2) / Math.max(1, element.clientHeight);
-    rotateCameraPose(pivot, worldUp, -deltaX * rotationScale);
-
-    const cameraRight = new Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
-    const pitch = -deltaY * rotationScale;
-    const nextOffset = camera.position
-        .clone()
-        .sub(controls.target)
-        .applyAxisAngle(cameraRight, pitch);
-    const nextPolarAngle = nextOffset.angleTo(worldUp);
-    if (nextPolarAngle > 0.08 && nextPolarAngle < Math.PI - 0.08) {
-        rotateCameraPose(pivot, cameraRight, pitch);
-    }
-}
-
-function rotateCameraPose(pivot: Vector3, axis: Vector3, angle: number) {
-    if (!camera || !controls || Math.abs(angle) < 0.000_001) return;
-    const rotation = new Quaternion().setFromAxisAngle(axis, angle);
-    camera.position.sub(pivot).applyAxisAngle(axis, angle).add(pivot);
-    controls.target.sub(pivot).applyAxisAngle(axis, angle).add(pivot);
-    camera.quaternion.premultiply(rotation);
-    camera.updateMatrixWorld();
+    cameraController?.rotateAround(pivotNode, deltaX, deltaY, element.clientHeight);
 }
 
 function constrainRotationCenterToViewport() {
-    if (!camera || !controls) return;
-    const pivotNode = props.focusId
-        ? props.graph.get(props.focusId)
-        : props.graph.get("grand_root");
-    if (!pivotNode) return;
-
-    projectedRotationCenter.set(pivotNode.x, pivotNode.y, pivotNode.z).project(camera);
-    const clampedX = Math.max(
-        -ROTATION_CENTER_VIEWPORT_LIMIT,
-        Math.min(ROTATION_CENTER_VIEWPORT_LIMIT, projectedRotationCenter.x)
-    );
-    const clampedY = Math.max(
-        -ROTATION_CENTER_VIEWPORT_LIMIT,
-        Math.min(ROTATION_CENTER_VIEWPORT_LIMIT, projectedRotationCenter.y)
-    );
-    if (clampedX === projectedRotationCenter.x && clampedY === projectedRotationCenter.y) return;
-
-    desiredRotationCenter.set(clampedX, clampedY, projectedRotationCenter.z).unproject(camera);
-    const correction = new Vector3(pivotNode.x, pivotNode.y, pivotNode.z).sub(
-        desiredRotationCenter
-    );
-    camera.position.add(correction);
-    controls.target.add(correction);
-    camera.updateMatrixWorld();
+    if (props.focusId) {
+        const pivotNode = props.graph.get(props.focusId);
+        if (pivotNode) cameraController?.constrainPivotToViewport(pivotNode);
+        return;
+    }
+    cameraController?.constrainPointsToViewport(props.graph.nodes.filter(isNodeRendered));
 }
 
 function onPointerUp(event: PointerEvent) {
@@ -679,16 +476,7 @@ function pickNodeAt(x: number, y: number, bounds: DOMRect) {
     }[] = [];
 
     for (const node of props.graph.nodes) {
-        if (node.visibilityAlpha < 0.05) continue;
-
-        if (
-            props.activeOnly &&
-            node.relativeScore <= 0.08 &&
-            node.id !== "grand_root" &&
-            node.id !== props.selectedId
-        ) {
-            continue;
-        }
+        if (!isNodeRendered(node)) continue;
         projectedNode.set(node.x, node.y, node.z).project(camera!);
         if (projectedNode.z < -1 || projectedNode.z > 1) continue;
         const screenX = ((projectedNode.x + 1) / 2) * bounds.width;
@@ -716,6 +504,16 @@ function pickNodeAt(x: number, y: number, bounds: DOMRect) {
     return nearby[0]?.id;
 }
 
+function isNodeRendered(node: ChannelGraph["nodes"][number]) {
+    if (node.visibilityAlpha < 0.05) return false;
+    return (
+        !props.activeOnly ||
+        node.relativeScore > 0.08 ||
+        node.id === "grand_root" ||
+        node.id === props.selectedId
+    );
+}
+
 function onContextLost(event: Event) {
     event.preventDefault();
     cancelAnimationFrame(frame);
@@ -741,7 +539,7 @@ function dispose() {
     effects = undefined;
     hierarchyEdges = undefined;
     selectionPath = undefined;
-    cameraTransition = undefined;
+    cameraController = undefined;
     composer?.dispose();
     composer = undefined;
     scene?.traverse(object => {
