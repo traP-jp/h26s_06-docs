@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { audioManager } from "./audio/audioManager";
+import ActivityChannels from "./components/ActivityChannels.vue";
 import AppMetrics from "./components/AppMetrics.vue";
 import AppTopBar from "./components/AppTopBar.vue";
 import ChannelDetails from "./components/ChannelDetails.vue";
@@ -203,10 +204,14 @@ function updateGraphVisibility(targetGraph: ChannelGraph, selected?: string) {
 
 function focusEventToast(channelId: string, toastId: number): void {
     if (!channelId) return;
+    focusChannel(channelId);
+    dismissEventToast(toastId);
+}
+
+function focusChannel(channelId: string): void {
     selectedId.value = channelId;
     focusId.value = channelId;
     focusRevision.value += 1;
-    dismissEventToast(toastId);
 }
 
 async function retryAuthentication() {
@@ -492,6 +497,12 @@ onBeforeUnmount(() => {
             :graph="graph"
             :event-count="eventCount"
             :updated-at="updatedAt"
+        />
+
+        <ActivityChannels
+            v-if="authState === 'authenticated' && graph"
+            :graph="graph"
+            @select="focusChannel"
         />
 
         <aside

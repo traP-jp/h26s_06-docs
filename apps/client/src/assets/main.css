@@ -234,6 +234,110 @@ h2 {
     background: rgb(68 150 210 / 16%);
 }
 
+.activity-channels {
+    top: 430px;
+    left: 24px;
+    width: 230px;
+    padding: 17px;
+}
+
+.activity-channels ol {
+    display: grid;
+    gap: 3px;
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.activity-channels li {
+    min-width: 0;
+}
+
+.activity-channels button {
+    display: grid;
+    grid-template-columns: 17px minmax(0, 1fr);
+    gap: 7px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    border: 1px solid transparent;
+    padding: 5px 4px;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+}
+
+.activity-channels button:hover,
+.activity-channels button:focus-visible {
+    border-color: rgb(105 215 255 / 22%);
+    outline: none;
+    background: rgb(68 150 210 / 9%);
+}
+
+.activity-channel__rank {
+    color: #53647a;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+    text-align: center;
+}
+
+.activity-channel__body,
+.activity-channel__summary {
+    display: flex;
+    min-width: 0;
+}
+
+.activity-channel__body {
+    flex-direction: column;
+    gap: 5px;
+}
+
+.activity-channel__summary {
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.activity-channel__summary strong {
+    overflow: hidden;
+    color: #adcae6;
+    font-size: 10px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.activity-channel__summary output {
+    flex: none;
+    color: #7187a4;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+}
+
+.activity-channel__track {
+    display: block;
+    height: 2px;
+    overflow: hidden;
+    background: rgb(130 180 240 / 12%);
+}
+
+.activity-channel__heat {
+    display: block;
+    height: 100%;
+    background: var(--channel-color);
+    box-shadow: 0 0 7px var(--channel-color);
+    transition: width 220ms ease;
+}
+
+.activity-channels__empty {
+    margin: 12px 0 0;
+    color: #53647a;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+    letter-spacing: 0.12em;
+}
+
 dl {
     margin: 0;
 }
@@ -661,6 +765,12 @@ dd {
 
     .display-controls {
         top: 308px;
+        left: 12px;
+        width: 190px;
+    }
+
+    .activity-channels {
+        top: 408px;
         left: 12px;
         width: 190px;
     }
