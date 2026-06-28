@@ -288,6 +288,9 @@ dd {
 }
 
 .details {
+    --activity-gauge-track: rgb(130 180 240 / 14%);
+    --activity-gauge-fill: #69d7ff;
+
     right: 24px;
     bottom: 52px;
     width: min(340px, calc(100vw - 48px));
@@ -319,11 +322,60 @@ dd {
 }
 
 .details dl {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
 }
 
 .details dd {
     font-size: 16px;
+}
+
+.details__activity {
+    grid-column: 1 / -1;
+}
+
+.details__activity dt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.details__activity output {
+    color: #adcae6;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 10px;
+    letter-spacing: normal;
+}
+
+.details__activity dd {
+    display: flex;
+    margin-top: 7px;
+}
+
+.details__activity progress {
+    width: 100%;
+    height: 3px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 999px;
+    appearance: none;
+    background: var(--activity-gauge-track);
+}
+
+.details__activity progress::-webkit-progress-bar {
+    border-radius: inherit;
+    background: var(--activity-gauge-track);
+}
+
+.details__activity progress::-webkit-progress-value {
+    border-radius: inherit;
+    background: var(--activity-gauge-fill);
+    box-shadow: 0 0 8px var(--activity-gauge-fill);
+}
+
+.details__activity progress::-moz-progress-bar {
+    border-radius: inherit;
+    background: var(--activity-gauge-fill);
+    box-shadow: 0 0 8px var(--activity-gauge-fill);
 }
 
 .hint {

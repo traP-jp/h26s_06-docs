@@ -72,6 +72,7 @@ const focusId = ref<string | undefined>();
 const focusRevision = ref(0);
 const settingsOpen = ref(false);
 const detailsOpen = ref(false);
+const activity = ref(0);
 let pendingStatusChannelId: string | undefined;
 let bufferedViewers: ViewersPayload | undefined;
 
@@ -415,6 +416,7 @@ onBeforeUnmount(() => {
             :active-only="activeOnly"
             @select="selectedId = $event"
             @message-node-reached="revealMessageNode"
+            @activity-change="activity = $event"
             @render-error="renderError = $event"
         />
 
@@ -470,6 +472,7 @@ onBeforeUnmount(() => {
         <ChannelDetails
             v-if="selected && detailsOpen"
             :selected="selected"
+            :activity="activity"
             :viewer-count="viewersUnavailable ? undefined : viewers.length"
             :viewers-pending="viewersPending"
             @close="detailsOpen = false"

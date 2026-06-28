@@ -49,6 +49,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     select: [id: string | undefined];
     messageNodeReached: [id: string];
+    activityChange: [activity: number];
     renderError: [message: string];
 }>();
 const host = useTemplateRef<HTMLDivElement>("host");
@@ -106,6 +107,30 @@ let hoverPending = false;
 let resizeObserver: ResizeObserver | undefined;
 let nodeBuffer = new NodeBuffer(props.graph.nodes.length);
 let hierarchyEdgeBuffer = new HierarchyEdgeBuffer(props.graph.nodes);
+let lastActivity = -1;
+let activitySelectedId: string | undefined;
+
+function updateSelectedActivity(allowIncrease = false) {
+    const selectedId = props.selectedId;
+    const relativeScore = selectedId ? (props.graph.get(selectedId)?.relativeScore ?? 0) : 0;
+    const activity = Math.round(Math.min(1, Math.max(0, relativeScore)) * 100);
+
+    if (selectedId !== activitySelectedId) {
+        activitySelectedId = selectedId;
+        lastActivity = activity;
+        emit("activityChange", activity);
+        return;
+    }
+    if (activity > lastActivity && !allowIncrease) return;
+    if (activity === lastActivity) return;
+
+    lastActivity = activity;
+    emit("activityChange", activity);
+}
+
+function handleActivityNodeReached(id: string) {
+    if (id === props.selectedId) updateSelectedActivity(true);
+}
 let hierarchyEdgeBaseColors = createEdgeBaseColors();
 const projectedNode = new Vector3();
 const hoverPointer = new Vector2();
@@ -179,7 +204,12 @@ function initialise() {
         scene.add(hierarchyEdges);
         selectionPath = createSelectionPath();
         scene.add(selectionPath);
-        effects = new EffectPool(scene, props.graph, id => emit("messageNodeReached", id));
+        effects = new EffectPool(
+            scene,
+            props.graph,
+            id => emit("messageNodeReached", id),
+            handleActivityNodeReached
+        );
         composer = new EffectComposer(renderer);
         composer.addPass(new RenderPass(scene, camera));
         composer.addPass(
@@ -404,6 +434,7 @@ function draw(now: number) {
     const delta = Math.min((now - lastFrame) / 1000, 0.1);
     lastFrame = now;
     props.graph.update(delta);
+    updateSelectedActivity();
     for (const event of props.graph.takeVisualEvents()) effects?.play(event, now);
     effects?.update(now);
     updateShootingStars(now);

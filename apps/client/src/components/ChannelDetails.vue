@@ -3,6 +3,7 @@ import type { SelectedChannel } from "../composables/useAppState";
 
 defineProps<{
     selected: SelectedChannel;
+    activity: number;
     viewerCount?: number;
     viewersPending: boolean;
 }>();
@@ -32,9 +33,18 @@ const emit = defineEmits<{
             {{ selected.path }}
         </a>
         <dl>
-            <div>
-                <dt>ACTIVITY</dt>
-                <dd>{{ (selected.relativeScore * 100).toFixed(0) }}</dd>
+            <div class="details__activity">
+                <dt>
+                    ACTIVITY
+                    <output>{{ activity }}</output>
+                </dt>
+                <dd>
+                    <progress
+                        :value="activity"
+                        max="100"
+                        :aria-label="`ACTIVITY ${activity}`"
+                    />
+                </dd>
             </div>
             <div>
                 <dt>VIEWERS</dt>
