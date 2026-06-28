@@ -84,8 +84,7 @@ func (cfg mariaDBConfig) dsn() string {
 	mysqlCfg := mysqlconfig.NewConfig()
 	mysqlCfg.User = cfg.user
 	mysqlCfg.Passwd = cfg.password
-	mysqlCfg.Net = "tcp"
-	mysqlCfg.Addr = net.JoinHostPort(cfg.hostname, cfg.port)
+	mysqlCfg.Net, mysqlCfg.Addr = cfg.networkAddress()
 	mysqlCfg.DBName = cfg.database
 	mysqlCfg.ParseTime = true
 	mysqlCfg.Loc = time.UTC
@@ -93,6 +92,13 @@ func (cfg mariaDBConfig) dsn() string {
 		"charset": "utf8mb4",
 	}
 	return mysqlCfg.FormatDSN()
+}
+
+func (cfg mariaDBConfig) networkAddress() (string, string) {
+	if strings.HasPrefix(cfg.hostname, "/") {
+		return "unix", cfg.hostname
+	}
+	return "tcp", net.JoinHostPort(cfg.hostname, cfg.port)
 }
 
 func (s *mariaDBStore) ensureSchema(ctx context.Context) error {

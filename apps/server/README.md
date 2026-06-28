@@ -14,6 +14,10 @@ NS_MARIADB_USER=...
 
 未設定の場合は従来通りインメモリで動作します。一部だけ設定されている場合は起動に失敗します。
 
+Cloud Run から Cloud SQL に接続する場合は、Cloud Run service に Cloud SQL instance を接続し、
+`NS_MARIADB_HOSTNAME` に `/cloudsql/PROJECT:REGION:INSTANCE` を設定します。
+この場合 `NS_MARIADB_PORT` は設定必須ですが、接続には使用されません。
+
 ## Tools
 
 ### ローカル実行
