@@ -10,15 +10,18 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+const maxConcurrentInits = 10
+
 func (s *server) handleEvents(c echo.Context) error {
 	r := c.Request()
 	w := c.Response().Writer
 	demo := c.QueryParam("demo") == "1"
-	var token tokenResponse
+	var sessionID string
+	var session authSession
 
 	if !demo {
 		var ok bool
-		token, ok = s.sessionToken(r)
+		sessionID, session, ok = s.session(r)
 		if !ok {
 			return echoHTTPError(c, "not authenticated", http.StatusUnauthorized)
 		}
@@ -35,12 +38,11 @@ func (s *server) handleEvents(c echo.Context) error {
 
 	streamState := s.demoState
 	streamHub := s.demoHub
-	initPayload := streamState.initPayloadBytes()
 	var liveChannelIDs map[string]bool
-	var liveChannels []traqChannel
+	var currentUserID string
 
 	if !demo {
-		data, err := s.ensureLiveChannelData(r.Context(), token.AccessToken)
+		data, err := s.ensureLiveChannelData(r.Context(), session.Token.AccessToken)
 		if err != nil {
 			writeSSE(w, marshalEvent("stream-error", map[string]string{"error": err.Error()}))
 			flusher.Flush()
@@ -48,11 +50,17 @@ func (s *server) handleEvents(c echo.Context) error {
 		}
 		streamState = data.State
 		streamHub = s.liveHub
-		initPayload = data.InitJSON
 		liveChannelIDs = data.ChannelIDs
-		liveChannels = data.Channels
+		currentUserID, err = s.ensureSessionTraqUserID(r.Context(), sessionID, session)
+		if err != nil {
+			writeSSE(w, marshalEvent("stream-error", map[string]string{"error": err.Error()}))
+			flusher.Flush()
+			return nil
+		}
 		s.startLiveSyncProducer(streamState)
 	}
+
+	initPayload := streamState.initPayloadBytes()
 
 	select {
 	case s.initTokens <- struct{}{}:
@@ -66,20 +74,18 @@ func (s *server) handleEvents(c echo.Context) error {
 	events := streamHub.subscribe()
 	defer streamHub.unsubscribe(events)
 
-	if !demo {
-		s.startLiveViewerPolling(liveChannels, streamState)
-	}
-
 	writeSSE(w, marshalEvent("status", map[string]string{"status": streamStatus(demo)}))
 	flusher.Flush()
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	var viewerEvents <-chan sseEvent
 	if demo {
 		s.startDemoProducer()
 		s.startDemoSyncProducer()
 	} else {
-		go s.consumeTraqStream(ctx, token.AccessToken, liveChannelIDs, streamState, streamHub)
+		viewerEvents = s.streamCurrentViewerEvents(ctx, currentUserID, streamState, liveChannelIDs)
+		go s.consumeTraqStream(ctx, session.Token.AccessToken, liveChannelIDs, streamState, streamHub)
 	}
 
 	heartbeat := time.NewTicker(25 * time.Second)
@@ -95,6 +101,13 @@ func (s *server) handleEvents(c echo.Context) error {
 		case event, ok := <-events:
 			if !ok {
 				return nil
+			}
+			writeSSE(w, event)
+			flusher.Flush()
+		case event, ok := <-viewerEvents:
+			if !ok {
+				viewerEvents = nil
+				continue
 			}
 			writeSSE(w, event)
 			flusher.Flush()

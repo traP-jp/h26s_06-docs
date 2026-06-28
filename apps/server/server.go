@@ -11,6 +11,8 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 )
 
+const authCleanupInterval = 10 * time.Minute
+
 func newServer(cfg config) (*server, error) {
 	if cfg.mariaDB.incomplete() {
 		return nil, fmt.Errorf("incomplete MariaDB config: missing %s", strings.Join(cfg.mariaDB.missing, ", "))
@@ -46,6 +48,7 @@ func newServer(cfg config) (*server, error) {
 		demoState:    demoState,
 		demoHub:      newEventHub(),
 		liveHub:      newEventHub(),
+		viewerHub:    newViewerSignalHub(),
 		initTokens:   make(chan struct{}, maxConcurrentInits),
 	}, nil
 }
@@ -60,7 +63,7 @@ func (s *server) routes() *echo.Echo {
 			return s.allowedOrigin(origin), nil
 		},
 		AllowHeaders:     []string{echo.HeaderContentType},
-		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodOptions},
 		AllowCredentials: true,
 	}))
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -78,6 +81,7 @@ func (s *server) routes() *echo.Echo {
 	e.Match(methods, "/api/auth/logout", s.handleLogout)
 	e.Match(methods, "/api/events", s.handleEvents)
 	e.Match(methods, "/api/me", s.handleMe)
+	e.PUT("/api/status", s.handleStatus)
 	e.Match(methods, "/healthz", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
@@ -108,6 +112,7 @@ func (s *server) close() {
 	}
 	s.demoHub.close()
 	s.liveHub.close()
+	s.viewerHub.close()
 	if s.store != nil {
 		if err := s.store.Close(); err != nil {
 			traqLogWarn("close persistence store: %v", err)

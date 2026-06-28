@@ -1,35 +1,33 @@
+import axios from "axios";
+
+import { http } from "../lib/http";
+import { buildAuthCallbackPath, buildAuthLoginPath, buildMePath } from "../lib/paths";
 import type { AuthUser } from "../types/api";
 
 type JsonObject = Record<string, unknown>;
 
 export async function fetchCurrentUser(): Promise<AuthUser | undefined> {
-    const response = await fetch("/api/me", {
-        credentials: "include",
-        headers: {
-            Accept: "application/json",
-        },
-    });
+    try {
+        const { data } = await http.get<JsonObject>(buildMePath());
 
-    if (response.status === 401) return undefined;
-    if (!response.ok) {
-        throw new Error(`/api/me returned ${response.status}`);
+        if (data.authenticated === false) return undefined;
+
+        const user = isJsonObject(data.user) ? data.user : data;
+        return normalizeUser(user);
+    } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 401) return undefined;
+        throw error;
     }
-
-    const payload = (await response.json()) as JsonObject;
-    if (payload.authenticated === false) return undefined;
-
-    const user = isJsonObject(payload.user) ? payload.user : payload;
-    return normalizeUser(user);
 }
 
 export function beginLogin() {
-    window.location.assign("/api/auth/login");
+    window.location.assign(buildAuthLoginPath());
 }
 
 export function redirectOAuthCallback() {
     if (window.location.pathname !== "/oauth/callback") return false;
 
-    window.location.replace(`/api/auth/callback${window.location.search}`);
+    window.location.replace(buildAuthCallbackPath(window.location.search));
     return true;
 }
 

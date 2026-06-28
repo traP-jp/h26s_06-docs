@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFetchMessageInfoFetchesUserBot(t *testing.T) {
@@ -23,9 +24,9 @@ func TestFetchMessageInfoFetchesUserBot(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/v3/messages/message-1":
-			return jsonResponse(r, `{"id":"message-1","userId":"user-1","channelId":"channel-1"}`), nil
+			return jsonResponse(r, `{"id":"message-1","userId":"user-1","channelId":"channel-1","content":"hello"}`), nil
 		case "/api/v3/messages/message-2":
-			return jsonResponse(r, `{"id":"message-2","userId":"user-1","channelId":"channel-2"}`), nil
+			return jsonResponse(r, `{"id":"message-2","userId":"user-1","channelId":"channel-2","content":"こんにちは"}`), nil
 		case "/api/v3/users/user-1":
 			return jsonResponse(r, `{"id":"user-1","bot":true}`), nil
 		default:
@@ -34,26 +35,38 @@ func TestFetchMessageInfoFetchesUserBot(t *testing.T) {
 		}
 	})}
 
-	channelID, isBot, err := srv.fetchMessageInfo(context.Background(), "token", "message-1")
+	info, err := srv.fetchMessageInfo(context.Background(), "token", "message-1")
 	if err != nil {
 		t.Fatalf("fetchMessageInfo returned error: %v", err)
 	}
-	if channelID != "channel-1" {
-		t.Fatalf("channelID = %q, want %q", channelID, "channel-1")
+	if info.ChannelID != "channel-1" {
+		t.Fatalf("channelID = %q, want %q", info.ChannelID, "channel-1")
 	}
-	if !isBot {
+	if info.UserID != "user-1" {
+		t.Fatalf("userID = %q, want %q", info.UserID, "user-1")
+	}
+	if !info.IsBot {
 		t.Fatal("isBot = false, want true")
 	}
+	if info.Length != 5 {
+		t.Fatalf("length = %d, want 5", info.Length)
+	}
 
-	channelID, isBot, err = srv.fetchMessageInfo(context.Background(), "token", "message-2")
+	info, err = srv.fetchMessageInfo(context.Background(), "token", "message-2")
 	if err != nil {
 		t.Fatalf("second fetchMessageInfo returned error: %v", err)
 	}
-	if channelID != "channel-2" {
-		t.Fatalf("second channelID = %q, want %q", channelID, "channel-2")
+	if info.ChannelID != "channel-2" {
+		t.Fatalf("second channelID = %q, want %q", info.ChannelID, "channel-2")
 	}
-	if !isBot {
+	if info.UserID != "user-1" {
+		t.Fatalf("second userID = %q, want %q", info.UserID, "user-1")
+	}
+	if !info.IsBot {
 		t.Fatal("second isBot = false, want true")
+	}
+	if info.Length != 5 {
+		t.Fatalf("second length = %d, want 5", info.Length)
 	}
 
 	wantPaths := []string{"/api/v3/messages/message-1", "/api/v3/users/user-1", "/api/v3/messages/message-2"}
@@ -159,6 +172,62 @@ func TestParseTraqEventViewStateActiveReturnsMovementTrigger(t *testing.T) {
 	}
 }
 
+func TestParseTraqEventChannelViewersChangedPublishesSignal(t *testing.T) {
+	srv, err := newServer(config{})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	signals := srv.viewerHub.subscribe()
+	defer srv.viewerHub.unsubscribe(signals)
+	payload := mustMarshalEvent(t, wsEvent{
+		Type: "CHANNEL_VIEWERS_CHANGED",
+		Body: mustMarshalRaw(t, wsChannelViewersChangedBody{ChannelID: "channel-a"}),
+	})
+
+	triggers, err := srv.parseTraqEvent(context.Background(), "token", payload)
+	if err != nil {
+		t.Fatalf("parseTraqEvent returned error: %v", err)
+	}
+	if len(triggers) != 0 {
+		t.Fatalf("triggers = %d, want 0", len(triggers))
+	}
+
+	select {
+	case signal := <-signals:
+		if signal.ChannelID != "channel-a" {
+			t.Fatalf("signal.ChannelID = %q, want channel-a", signal.ChannelID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for viewer signal")
+	}
+}
+
+func TestParseTraqEventChannelViewersChangedAcceptsSnakeChannelID(t *testing.T) {
+	srv, err := newServer(config{})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	signals := srv.viewerHub.subscribe()
+	defer srv.viewerHub.unsubscribe(signals)
+	payload := mustMarshalEvent(t, wsEvent{
+		Type: "CHANNEL_VIEWERS_CHANGED",
+		Body: []byte(`{"channel_id":"channel-b"}`),
+	})
+
+	if _, err := srv.parseTraqEvent(context.Background(), "token", payload); err != nil {
+		t.Fatalf("parseTraqEvent returned error: %v", err)
+	}
+
+	select {
+	case signal := <-signals:
+		if signal.ChannelID != "channel-b" {
+			t.Fatalf("signal.ChannelID = %q, want channel-b", signal.ChannelID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for viewer signal")
+	}
+}
+
 func mustMarshalRaw(t *testing.T, value any) json.RawMessage {
 	t.Helper()
 	data, err := json.Marshal(value)
@@ -183,7 +252,7 @@ func TestParseTraqEventMessageUsesBotTokenForMessageAPI(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v3/messages/message-a":
 			gotAuth = r.Header.Get("Authorization")
-			_ = json.NewEncoder(w).Encode(traqMessage{ChannelID: "channel-a", UserID: "user-a"})
+			_ = json.NewEncoder(w).Encode(traqMessage{ChannelID: "channel-a", UserID: "user-a", Content: "hello world"})
 		case "/api/v3/users/user-a":
 			_ = json.NewEncoder(w).Encode(traqUser{Bot: false})
 		default:
@@ -210,5 +279,14 @@ func TestParseTraqEventMessageUsesBotTokenForMessageAPI(t *testing.T) {
 	}
 	if gotAuth != "Bearer bot-token" {
 		t.Fatalf("Authorization = %q, want Bearer bot-token", gotAuth)
+	}
+	if triggers[0].MessageLength != 11 {
+		t.Fatalf("MessageLength = %d, want 11", triggers[0].MessageLength)
+	}
+	if !triggers[0].HasMessageLength {
+		t.Fatal("HasMessageLength was false")
+	}
+	if triggers[0].MessageUserID != "user-a" {
+		t.Fatalf("MessageUserID = %q, want user-a", triggers[0].MessageUserID)
 	}
 }

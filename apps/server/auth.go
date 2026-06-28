@@ -16,8 +16,34 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+const (
+	sessionCookieName = "traq_session"
+)
+
+type authSession struct {
+	Token      tokenResponse
+	ExpiresAt  time.Time
+	TraqUserID string
+	TraqName   string
+}
+
+type tokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	Scope        string `json:"scope,omitempty"`
+}
+
 type traqMe struct {
+	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+type meResponse struct {
+	Authenticated   bool   `json:"authenticated"`
+	OAuthConfigured bool   `json:"oauthConfigured"`
+	Name            string `json:"name,omitempty"`
 }
 
 func (s *server) handleLogin(c echo.Context) error {
@@ -65,16 +91,17 @@ func (s *server) handleCallback(c echo.Context) error {
 		return echoHTTPError(c, "token exchange failed", http.StatusBadGateway)
 	}
 
+	me, err := s.fetchTraqMe(r.Context(), token.AccessToken)
+	if err != nil {
+		traqLogError("failed to fetch traQ user info: %v", err)
+		return echoHTTPError(c, "failed to fetch user info", http.StatusBadGateway)
+	}
 	if len(s.cfg.allowedTraqIDs) > 0 {
-		me, err := s.fetchTraqMe(r.Context(), token.AccessToken)
-		if err != nil {
-			traqLogError("failed to fetch traQ user info: %v", err)
-			return echoHTTPError(c, "failed to verify user identity", http.StatusBadGateway)
-		}
 		if !s.cfg.allowedTraqIDs[me.Name] {
 			return c.Redirect(http.StatusFound, s.cfg.appOrigin+"?error=forbidden")
 		}
 	}
+	traqUserID := me.userID()
 
 	sessionID, err := randomToken(32)
 	if err != nil {
@@ -84,8 +111,10 @@ func (s *server) handleCallback(c echo.Context) error {
 	sessionMaxAge := token.ExpiresIn
 	sessionExpiresAt := time.Now().Add(time.Duration(sessionMaxAge) * time.Second)
 	session := authSession{
-		Token:     token,
-		ExpiresAt: sessionExpiresAt,
+		Token:      token,
+		ExpiresAt:  sessionExpiresAt,
+		TraqUserID: traqUserID,
+		TraqName:   me.traqName(),
 	}
 
 	s.authMu.Lock()
@@ -109,10 +138,24 @@ func (s *server) handleCallback(c echo.Context) error {
 }
 
 func (s *server) handleMe(c echo.Context) error {
-	_, ok := s.sessionToken(c.Request())
-	return c.JSON(http.StatusOK, map[string]bool{
-		"authenticated":   ok,
-		"oauthConfigured": s.cfg.oauthClientID != "",
+	sessionID, session, ok := s.session(c.Request())
+	if !ok {
+		return c.JSON(http.StatusOK, meResponse{
+			Authenticated:   false,
+			OAuthConfigured: s.cfg.oauthClientID != "",
+		})
+	}
+
+	me, err := s.ensureSessionTraqMe(c.Request().Context(), sessionID, session)
+	if err != nil {
+		traqLogError("failed to fetch traQ user info for /api/me: %v", err)
+		return echoHTTPError(c, "failed to fetch user info", http.StatusBadGateway)
+	}
+
+	return c.JSON(http.StatusOK, meResponse{
+		Authenticated:   true,
+		OAuthConfigured: s.cfg.oauthClientID != "",
+		Name:            me.traqName(),
 	})
 }
 
@@ -180,9 +223,17 @@ func (s *server) consumeOAuthState(state string) bool {
 }
 
 func (s *server) sessionToken(r *http.Request) (tokenResponse, bool) {
+	_, session, ok := s.session(r)
+	if !ok {
+		return tokenResponse{}, false
+	}
+	return session.Token, true
+}
+
+func (s *server) session(r *http.Request) (string, authSession, bool) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
 
 	s.authMu.Lock()
@@ -191,33 +242,80 @@ func (s *server) sessionToken(r *http.Request) (tokenResponse, bool) {
 		delete(s.sessions, cookie.Value)
 		s.authMu.Unlock()
 		s.deletePersistedAuthSession(r.Context(), cookie.Value)
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
 	if ok {
 		s.authMu.Unlock()
-		return session.Token, true
+		return cookie.Value, session, true
 	}
 	s.authMu.Unlock()
 
 	if s.store == nil {
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
 	session, ok, err = s.store.FindAuthSession(r.Context(), cookie.Value)
 	if err != nil {
 		traqLogWarn("load persisted oauth session failed: %v", err)
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
 	if !ok {
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
 	if !time.Now().Before(session.ExpiresAt) {
 		s.deletePersistedAuthSession(r.Context(), cookie.Value)
-		return tokenResponse{}, false
+		return "", authSession{}, false
 	}
 	s.authMu.Lock()
 	s.sessions[cookie.Value] = session
 	s.authMu.Unlock()
-	return session.Token, true
+	return cookie.Value, session, true
+}
+
+func (s *server) ensureSessionTraqUserID(ctx context.Context, sessionID string, session authSession) (string, error) {
+	if session.TraqUserID != "" {
+		return session.TraqUserID, nil
+	}
+
+	me, err := s.ensureSessionTraqMe(ctx, sessionID, session)
+	if err != nil {
+		return "", err
+	}
+	return me.userID(), nil
+}
+
+func (s *server) ensureSessionTraqMe(ctx context.Context, sessionID string, session authSession) (traqMe, error) {
+	if me, ok := session.cachedTraqMe(); ok {
+		return me, nil
+	}
+
+	s.authMu.Lock()
+	current, ok := s.sessions[sessionID]
+	if ok && time.Now().Before(current.ExpiresAt) {
+		if me, cached := current.cachedTraqMe(); cached {
+			s.authMu.Unlock()
+			return me, nil
+		}
+	}
+	s.authMu.Unlock()
+
+	me, err := s.fetchTraqMe(ctx, session.Token.AccessToken)
+	if err != nil {
+		return traqMe{}, err
+	}
+
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	current, ok = s.sessions[sessionID]
+	if !ok || !time.Now().Before(current.ExpiresAt) {
+		return me, nil
+	}
+	if cached, ok := current.cachedTraqMe(); ok {
+		return cached, nil
+	}
+	current.TraqUserID = me.userID()
+	current.TraqName = me.traqName()
+	s.sessions[sessionID] = current
+	return me, nil
 }
 
 func (s *server) cleanupExpiredAuth(now time.Time) {
@@ -252,30 +350,32 @@ func (s *server) deletePersistedAuthSession(ctx context.Context, sessionID strin
 }
 
 func (s *server) fetchTraqMe(ctx context.Context, accessToken string) (traqMe, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/users/me", nil)
-	if err != nil {
-		return traqMe{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return traqMe{}, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return traqMe{}, fmt.Errorf("users/me returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
 	var me traqMe
-	if err := json.Unmarshal(body, &me); err != nil {
-		return traqMe{}, err
+	if _, err := s.traqGetJSON(ctx, accessToken, "/api/v3/users/me", &me); err != nil {
+		return traqMe{}, fmt.Errorf("users/me: %w", err)
 	}
-	if me.Name == "" {
-		return traqMe{}, errors.New("users/me did not return name")
+	if me.ID == "" && me.Name == "" {
+		return traqMe{}, errors.New("users/me did not return id or name")
 	}
 	return me, nil
+}
+
+func (me traqMe) userID() string {
+	if me.ID != "" {
+		return me.ID
+	}
+	return me.Name
+}
+
+func (me traqMe) traqName() string {
+	return me.Name
+}
+
+func (session authSession) cachedTraqMe() (traqMe, bool) {
+	if session.TraqName == "" {
+		return traqMe{}, false
+	}
+	return traqMe{ID: session.TraqUserID, Name: session.TraqName}, true
 }
 
 func randomToken(size int) (string, error) {

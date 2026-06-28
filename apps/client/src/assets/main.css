@@ -62,22 +62,22 @@ button {
     padding: 16px 20px;
 }
 
-.topbar > div {
+.topbar__brand {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
+}
+
+.topbar__title {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .topbar-logo {
-    height: 32px;
+    height: 42px;
     width: auto;
     flex-shrink: 0;
-}
-
-.topbar__meta {
-    display: flex;
-    align-items: center;
-    gap: 16px;
 }
 
 .eyebrow {
@@ -208,7 +208,7 @@ h2 {
     top: 330px;
     left: 24px;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     width: 230px;
     gap: 6px;
     padding: 14px 17px 17px;
@@ -265,29 +265,161 @@ dd {
     font-size: 20px;
 }
 
-.latest {
+.stream-clock {
     display: grid;
     gap: 5px;
     margin-top: 15px;
 }
 
-.latest span,
-.latest time {
+.stream-clock span,
+.stream-clock time {
     color: #62768f;
     font-size: 8px;
-    letter-spacing: 0.14em;
+    letter-spacing: 0;
 }
 
-.latest strong {
+.stream-clock time {
+    color: #adcae6;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 12px;
+}
+
+.event-toasts {
+    position: absolute;
+    top: 84px;
+    right: 24px;
+    z-index: 4;
+    display: grid;
+    width: min(260px, calc(100vw - 48px));
+    pointer-events: none;
+}
+
+.event-toast {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 22px;
+    gap: 9px;
+    align-items: center;
     overflow: hidden;
+    min-height: 42px;
+    border: 1px solid rgb(140 190 255 / 18%);
+    border-radius: 6px;
+    padding: 8px 8px 8px 10px;
+    background:
+        linear-gradient(135deg, rgb(6 15 30 / 92%), rgb(10 17 25 / 80%)), rgb(5 12 25 / 88%);
+    box-shadow: 0 12px 42px rgb(0 0 0 / 28%);
+    backdrop-filter: blur(18px);
+    pointer-events: auto;
+}
+
+.event-toast__focus {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 7px minmax(0, 1fr);
+    gap: 9px;
+    align-items: center;
+    min-width: 0;
+    border: 0;
+    padding: 8px 39px 8px 10px;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+}
+
+.event-toast:has(> .event-toast__focus:focus-visible) {
+    border-color: rgb(117 202 255 / 72%);
+}
+
+.event-toast__focus:focus-visible {
+    outline: none;
+}
+
+.event-toast::before {
+    position: absolute;
+    inset: 0;
+    border-left: 2px solid #75caff;
+    content: "";
+    pointer-events: none;
+}
+
+.event-toast[data-tone="move"]::before {
+    border-left-color: #63efb2;
+}
+
+.event-toast__signal {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #75caff;
+    box-shadow: 0 0 18px rgb(117 202 255 / 72%);
+}
+
+.event-toast[data-tone="move"] .event-toast__signal {
+    background: #63efb2;
+    box-shadow: 0 0 18px rgb(99 239 178 / 58%);
+}
+
+.event-toast__body {
+    display: block;
+    overflow: hidden;
+    min-width: 0;
     color: #adcae6;
     font-size: 11px;
-    font-weight: 500;
+    line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+.event-toast__close {
+    position: relative;
+    z-index: 1;
+    grid-column: 2;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0;
+    color: #7187a4;
+    background: transparent;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+}
+
+.event-toast__close:hover {
+    border-color: rgb(140 190 255 / 16%);
+    color: #d9edff;
+    background: rgb(140 190 255 / 8%);
+}
+
+.event-toast-enter-active,
+.event-toast-leave-active,
+.event-toast-move {
+    transition:
+        opacity 180ms ease,
+        transform 180ms ease;
+}
+
+.event-toast-enter-from,
+.event-toast-leave-to {
+    opacity: 0;
+    transform: translateX(18px);
+}
+
+.event-toast-leave-active {
+    position: absolute;
+    width: 100%;
+}
+
 .details {
+    --activity-gauge-track: rgb(130 180 240 / 14%);
+    --activity-gauge-fill: #69d7ff;
+
     right: 24px;
     bottom: 52px;
     width: min(340px, calc(100vw - 48px));
@@ -308,16 +440,71 @@ dd {
 .details__path {
     margin: 8px 0 0;
     color: #7187a4;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.6;
+    text-decoration: none;
+}
+
+.details__path:hover {
+    color: #adcae6;
+    text-decoration: underline;
 }
 
 .details dl {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
 }
 
 .details dd {
     font-size: 16px;
+}
+
+.details__activity {
+    grid-column: 1 / -1;
+}
+
+.details__activity dt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.details__activity output {
+    color: #adcae6;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 10px;
+    letter-spacing: normal;
+}
+
+.details__activity dd {
+    display: flex;
+    margin-top: 7px;
+}
+
+.details__activity progress {
+    width: 100%;
+    height: 3px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 999px;
+    appearance: none;
+    background: var(--activity-gauge-track);
+}
+
+.details__activity progress::-webkit-progress-bar {
+    border-radius: inherit;
+    background: var(--activity-gauge-track);
+}
+
+.details__activity progress::-webkit-progress-value {
+    border-radius: inherit;
+    background: var(--activity-gauge-fill);
+    box-shadow: 0 0 8px var(--activity-gauge-fill);
+}
+
+.details__activity progress::-moz-progress-bar {
+    border-radius: inherit;
+    background: var(--activity-gauge-fill);
+    box-shadow: 0 0 8px var(--activity-gauge-fill);
 }
 
 .hint {
@@ -458,17 +645,12 @@ dd {
         gap: 12px;
     }
 
-    .topbar__meta {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
     h1 {
         font-size: 17px;
     }
 
-    .session-pill {
-        justify-content: space-between;
+    .topbar-logo {
+        height: 38px;
     }
 
     .metrics {
@@ -481,6 +663,18 @@ dd {
         top: 308px;
         left: 12px;
         width: 190px;
+    }
+
+    .event-toasts {
+        top: 86px;
+        right: 12px;
+        bottom: auto;
+        left: 12px;
+        width: auto;
+    }
+
+    .event-toast {
+        min-height: 42px;
     }
 
     .details {
@@ -677,6 +871,31 @@ dd {
     outline-offset: 2px;
 }
 
+.settingsStatus {
+    display: grid;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid rgb(140 190 255 / 12%);
+}
+
+.settingsStatus .connection,
+.settingsStatus .session-pill {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.settingsStatus .connection {
+    min-width: 0;
+    border: 1px solid rgb(140 190 255 / 13%);
+    padding: 10px;
+    background: rgb(5 12 25 / 72%);
+}
+
+.settingsStatus .connection small {
+    max-width: 260px;
+}
+
 .volumeControl {
     display: grid;
     gap: 8px;
@@ -799,4 +1018,129 @@ dd {
     border-color: rgb(105 215 255 / 32%);
     color: #ccecff;
     background: rgb(68 150 210 / 14%);
+}
+
+.shortcutsButton {
+    width: 100%;
+    min-height: 42px;
+    border: 1px solid rgb(140 190 255 / 16%);
+    background: rgb(97 152 214 / 10%);
+    color: #adcae6;
+    cursor: pointer;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.shortcutsButton:hover {
+    border-color: rgb(105 215 255 / 36%);
+    color: #d9edff;
+    background: rgb(68 150 210 / 14%);
+}
+
+.shortcutOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 130;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgb(0 3 10 / 78%);
+    backdrop-filter: blur(10px);
+}
+
+.shortcutDialog {
+    width: min(760px, 100%);
+    max-height: min(720px, calc(100vh - 48px));
+    padding: 26px;
+    overflow: auto;
+    box-sizing: border-box;
+    border: 1px solid rgb(140 190 255 / 18%);
+    background: rgb(5 12 25 / 96%);
+    color: #eaf3ff;
+    box-shadow:
+        0 0 0 1px rgb(255 255 255 / 3%) inset,
+        0 28px 90px rgb(0 0 0 / 58%);
+}
+
+.shortcutHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 24px;
+}
+
+.shortcutHeader h2 {
+    margin: 0;
+    font-size: 24px;
+    letter-spacing: 0.04em;
+}
+
+.shortcutGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 30px;
+}
+
+.shortcutSection h3 {
+    margin: 0 0 12px;
+    color: #75caff;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.shortcutSection dl {
+    display: grid;
+    gap: 10px;
+}
+
+.shortcutSection dl > div {
+    display: grid;
+    grid-template-columns: minmax(112px, max-content) 1fr;
+    align-items: center;
+    gap: 14px;
+    min-height: 36px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgb(140 190 255 / 9%);
+}
+
+.shortcutSection dt {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.shortcutSection dd {
+    color: #adcae6;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.shortcutSection kbd {
+    min-width: 24px;
+    padding: 4px 7px;
+    border: 1px solid rgb(140 190 255 / 18%);
+    background: rgb(0 0 0 / 34%);
+    color: #eaf3ff;
+    box-shadow:
+        0 1px 0 rgb(255 255 255 / 8%) inset,
+        0 0 12px rgb(117 202 255 / 8%);
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11px;
+    line-height: 1;
+    text-align: center;
+}
+
+.shortcut-fade-enter-active,
+.shortcut-fade-leave-active {
+    transition:
+        opacity 160ms ease,
+        transform 160ms ease;
+}
+
+.shortcut-fade-enter-from,
+.shortcut-fade-leave-to {
+    opacity: 0;
 }

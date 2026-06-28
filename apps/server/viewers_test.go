@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -101,10 +102,107 @@ func TestStreamViewerSnapshotsSkipsFetchWithoutSubscribers(t *testing.T) {
 	}
 }
 
+func TestStreamCurrentViewerEventsEmitsSelectedChannelViewerIDs(t *testing.T) {
+	base := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	srv := newViewerSnapshotTestServer(t, map[string][]traqViewer{
+		"general": {
+			{UserID: "user-02", State: "monitoring", UpdatedAt: base},
+			{UserID: "user-01", State: "editing", UpdatedAt: base},
+			{UserID: "user-02", State: "stale_viewing", UpdatedAt: base},
+		},
+	})
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "general", Name: "general"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+	if !state.setUserStatus("current-user", "general") {
+		t.Fatal("setUserStatus returned false")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := srv.streamCurrentViewerEvents(ctx, "current-user", state, map[string]bool{"general": true})
+
+	event := readViewerEvent(t, events)
+	if event.Name != "viewers" {
+		t.Fatalf("event.Name = %q, want viewers", event.Name)
+	}
+	var payload viewersPayload
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	want := []string{"user-01", "user-02"}
+	if !reflect.DeepEqual(payload.Viewers, want) {
+		t.Fatalf("payload.Viewers = %#v, want %#v", payload.Viewers, want)
+	}
+}
+
+func TestStreamCurrentViewerEventsEmitsAfterViewerSignal(t *testing.T) {
+	base := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	srv := newViewerSnapshotTestServer(t, map[string][]traqViewer{
+		"general": {{UserID: "user-00", State: "monitoring", UpdatedAt: base}},
+	})
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "general", Name: "general"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := srv.streamCurrentViewerEvents(ctx, "current-user", state, map[string]bool{"general": true})
+
+	assertNoViewerEvent(t, events)
+
+	if !state.setUserStatus("current-user", "general") {
+		t.Fatal("setUserStatus returned false")
+	}
+	srv.viewerHub.publish(viewerSignal{ChannelID: "general"})
+
+	event := readViewerEvent(t, events)
+	var payload viewersPayload
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if !reflect.DeepEqual(payload.Viewers, []string{"user-00"}) {
+		t.Fatalf("payload.Viewers = %#v, want [user-00]", payload.Viewers)
+	}
+}
+
+func TestStreamCurrentViewerEventsDoesNotEmitAfterStatusClear(t *testing.T) {
+	base := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	srv := newViewerSnapshotTestServer(t, map[string][]traqViewer{
+		"general": {{UserID: "user-00", State: "monitoring", UpdatedAt: base}},
+	})
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "general", Name: "general"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+	if !state.setUserStatus("current-user", "general") {
+		t.Fatal("setUserStatus returned false")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := srv.streamCurrentViewerEvents(ctx, "current-user", state, map[string]bool{"general": true})
+
+	_ = readViewerEvent(t, events)
+	if !state.clearUserStatus("current-user") {
+		t.Fatal("clearUserStatus returned false")
+	}
+	srv.viewerHub.publish(viewerSignal{ChannelID: "general"})
+
+	assertNoViewerEvent(t, events)
+}
+
 func newViewerSnapshotTestServer(t *testing.T, viewersByChannel map[string][]traqViewer) *server {
 	t.Helper()
 
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Errorf("Authorization = %q, want Bearer token", got)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		channelID, ok := strings.CutPrefix(r.URL.Path, "/api/v3/channels/")
 		if !ok {
 			http.NotFound(w, r)
@@ -127,7 +225,10 @@ func newViewerSnapshotTestServer(t *testing.T, viewersByChannel map[string][]tra
 	}))
 	t.Cleanup(api.Close)
 
-	srv, err := newServer(config{traqBaseURL: api.URL})
+	srv, err := newServer(config{
+		traqBaseURL:        api.URL,
+		traqBotAccessToken: "token",
+	})
 	if err != nil {
 		t.Fatalf("newServer returned error: %v", err)
 	}
@@ -143,6 +244,32 @@ func newViewerSnapshotTestPoller(t *testing.T, channels []traqChannel, maxPerTic
 		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
 	}
 	return newViewerPoller(channels, maxPerTick, state)
+}
+
+func readViewerEvent(t *testing.T, events <-chan sseEvent) sseEvent {
+	t.Helper()
+	select {
+	case event, ok := <-events:
+		if !ok {
+			t.Fatal("viewer event channel was closed")
+		}
+		return event
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for viewer event")
+	}
+	return sseEvent{}
+}
+
+func assertNoViewerEvent(t *testing.T, events <-chan sseEvent) {
+	t.Helper()
+	select {
+	case event, ok := <-events:
+		if !ok {
+			t.Fatal("viewer event channel was closed")
+		}
+		t.Fatalf("unexpected viewer event: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
 }
 
 func newTestViewers(count int, state string, base time.Time) []traqViewer {
