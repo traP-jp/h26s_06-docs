@@ -281,6 +281,7 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 			sm.rememberMessageIDLocked(trigger.MessageID)
 		}
 		sm.addScoreLocked(trigger.Ch, messageScoreAmount)
+		trigger.ScoreDelta = messageScoreAmount
 		return trigger, true
 	case "mov":
 		if trigger.ClearCurrent {
@@ -326,6 +327,7 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 		}
 		score := movementScoreAmount
 		sm.addScoreLocked(trigger.To, score)
+		trigger.ScoreDelta = score
 		debugMov(trigger, fromName, toName, "applied", "user moved to a different channel; destination channel and ancestors receive movement score", score)
 		return trigger, true
 	default:

@@ -32,7 +32,7 @@ data: {
 
 ```json
 event: trigger
-data: {"type": "msg", "ch": "sub_ch_10"}
+data: {"type": "msg", "ch": "sub_ch_10", "delta": 1.0}
 
 ```
 
@@ -40,9 +40,11 @@ data: {"type": "msg", "ch": "sub_ch_10"}
 
 ```json
 event: trigger
-data: {"type": "mov", "usr": "user_hash_123", "from": "sub_ch_10", "to": "sub_ch_11"}
+data: {"type": "mov", "usr": "user_hash_123", "from": "sub_ch_10", "to": "sub_ch_11", "delta": 0.25}
 
 ```
+
+`delta` は対象チャンネル（深さ0）に加算されるスコアの増加量。祖先チャンネルへの伝播は `ancestorScoreFactor` の累乗で減衰する。
 
 ### 3.3 `sync` イベント (定期同期)
 
