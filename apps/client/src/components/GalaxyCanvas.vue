@@ -65,6 +65,21 @@ const keyboardZoomAcceleration = 3.2;
 const keyboardZoomMaxSpeed = 1.8;
 const keyboardZoomDamping = 6;
 const keyboardMotionEpsilon = 0.01;
+const shootingStarPoolSize = 40;
+const shootingStarMeanInterval = 3000;
+const shootingStarClusterChance = 0.18;
+const shootingStarClusterMax = 5;
+
+interface ShootingStar {
+    active: boolean;
+    startedAt: number;
+    duration: number;
+    start: Vector3;
+    direction: Vector3;
+    length: number;
+    travel: number;
+    brightness: number;
+}
 
 let renderer: WebGLRenderer | undefined;
 let scene: Scene | undefined;
@@ -74,6 +89,7 @@ let cameraController: CameraController | undefined;
 let composer: EffectComposer | undefined;
 let effects: EffectPool | undefined;
 let nodes: InstancedMesh<SphereGeometry, ShaderMaterial> | undefined;
+let shootingStars: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let hierarchyEdges: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let selectionPath: Line<BufferGeometry, LineBasicMaterial> | undefined;
 let frame = 0;
@@ -100,6 +116,22 @@ const keyboardRotationVelocity = new Vector2();
 const keyboardPanInput = new Vector2();
 const keyboardRotationInput = new Vector2();
 let keyboardZoomVelocity = 0;
+let nextShootingStarAt = performance.now() + randomShootingStarInterval();
+const shootingStarPool: ShootingStar[] = Array.from({ length: shootingStarPoolSize }, () => ({
+    active: false,
+    startedAt: 0,
+    duration: 0,
+    start: new Vector3(),
+    direction: new Vector3(),
+    length: 0,
+    travel: 0,
+    brightness: 0,
+}));
+const shootingStarViewDirection = new Vector3();
+const shootingStarRight = new Vector3();
+const shootingStarUp = new Vector3();
+const shootingStarHead = new Vector3();
+const shootingStarTail = new Vector3();
 const NODE_PICK_RADIUS = 28;
 const nodeVertexShader = `
 varying vec3 vColor;
@@ -186,6 +218,9 @@ function initialise() {
         controls.enablePan = true;
         cameraController = new CameraController(camera, controls);
 
+        resetShootingStars();
+        shootingStars = createShootingStars();
+        scene.add(shootingStars);
         nodes = createNodeMesh();
         scene.add(nodes);
         hierarchyEdges = createEdges();
@@ -255,6 +290,34 @@ function createNodeMesh() {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.frustumCulled = false;
     return mesh;
+}
+
+function createShootingStars() {
+    const positions = new Float32Array(shootingStarPoolSize * 6);
+    const colors = new Float32Array(shootingStarPoolSize * 6);
+    const geometry = new BufferGeometry();
+    geometry.setAttribute(
+        "position",
+        new Float32BufferAttribute(positions, 3).setUsage(DynamicDrawUsage)
+    );
+    geometry.setAttribute(
+        "color",
+        new Float32BufferAttribute(colors, 3).setUsage(DynamicDrawUsage)
+    );
+    geometry.setDrawRange(0, 0);
+    const lines = new LineSegments(
+        geometry,
+        new LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.72,
+            blending: AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false,
+        })
+    );
+    lines.frustumCulled = false;
+    return lines;
 }
 
 function createEdges() {
@@ -398,6 +461,7 @@ function draw(now: number) {
     props.graph.update(delta);
     for (const event of props.graph.takeVisualEvents()) effects?.play(event, now);
     effects?.update(now);
+    updateShootingStars(now);
     nodeBuffer.update(props.graph.nodes, now, props.selectedId, props.activeOnly);
     (nodes.instanceMatrix.array as Float32Array).set(nodeBuffer.matrixData);
     nodes.instanceMatrix.needsUpdate = true;
@@ -412,6 +476,109 @@ function draw(now: number) {
     constrainRotationCenterToViewport();
     updateHoverCursor();
     composer.render();
+}
+
+function updateShootingStars(now: number) {
+    if (!shootingStars || !camera) return;
+    while (now >= nextShootingStarAt) {
+        const count =
+            Math.random() < shootingStarClusterChance
+                ? 2 + Math.floor(Math.random() * (shootingStarClusterMax - 1))
+                : 1;
+        for (let index = 0; index < count; index += 1) {
+            spawnShootingStar(now, index, count);
+        }
+        nextShootingStarAt += randomShootingStarInterval();
+    }
+
+    const positionAttribute = shootingStars.geometry.getAttribute(
+        "position"
+    ) as Float32BufferAttribute;
+    const colorAttribute = shootingStars.geometry.getAttribute("color") as Float32BufferAttribute;
+    const posArray = positionAttribute.array as Float32Array;
+    const colArray = colorAttribute.array as Float32Array;
+    let offset = 0;
+
+    for (const star of shootingStarPool) {
+        if (!star.active) continue;
+        const progress = (now - star.startedAt) / star.duration;
+        if (progress < 0) continue;
+        if (progress >= 1) {
+            star.active = false;
+            continue;
+        }
+
+        const fade = Math.sin(progress * Math.PI) ** 1.35 * star.brightness;
+        shootingStarHead.copy(star.start).addScaledVector(star.direction, star.travel * progress);
+        shootingStarTail.copy(shootingStarHead).addScaledVector(star.direction, -star.length);
+
+        posArray[offset] = shootingStarTail.x;
+        posArray[offset + 1] = shootingStarTail.y;
+        posArray[offset + 2] = shootingStarTail.z;
+        posArray[offset + 3] = shootingStarHead.x;
+        posArray[offset + 4] = shootingStarHead.y;
+        posArray[offset + 5] = shootingStarHead.z;
+
+        colArray[offset] = 0.2 * fade;
+        colArray[offset + 1] = 0.34 * fade;
+        colArray[offset + 2] = 0.52 * fade;
+        colArray[offset + 3] = 0.78 * fade;
+        colArray[offset + 4] = 0.92 * fade;
+        colArray[offset + 5] = 1.0 * fade;
+        offset += 6;
+    }
+
+    shootingStars.geometry.setDrawRange(0, (offset / 3) | 0);
+    positionAttribute.needsUpdate = true;
+    colorAttribute.needsUpdate = true;
+}
+
+function spawnShootingStar(now: number, clusterIndex: number, clusterCount: number) {
+    if (!camera) return;
+    const star = shootingStarPool.find(item => !item.active) ?? shootingStarPool[0];
+    if (!star) return;
+    const depthBase = controls ? camera.position.distanceTo(controls.target) : 800;
+    const depth = Math.min(camera.far * 0.58, Math.max(720, depthBase + 620));
+    const viewportHeight = 2 * Math.tan((camera.fov * Math.PI) / 360) * depth;
+    const viewportWidth = viewportHeight * camera.aspect;
+    const clusterSpread = clusterCount <= 1 ? 0 : viewportHeight * 0.045;
+
+    camera.getWorldDirection(shootingStarViewDirection).normalize();
+    shootingStarRight.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+    shootingStarUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+
+    const clusterOffset = (clusterIndex - (clusterCount - 1) / 2) * clusterSpread;
+    const x = (Math.random() * 1.3 - 0.65) * viewportWidth + clusterOffset * 0.35;
+    const y = (0.12 + Math.random() * 0.82) * viewportHeight + clusterOffset;
+    const screenDirectionX = 0.72 + Math.random() * 0.28;
+    const screenDirectionY = -(0.3 + Math.random() * 0.28);
+    const direction = shootingStarRight
+        .clone()
+        .multiplyScalar(screenDirectionX)
+        .addScaledVector(shootingStarUp, screenDirectionY)
+        .normalize();
+
+    star.active = true;
+    star.startedAt = now + clusterIndex * (45 + Math.random() * 65);
+    star.duration = 680 + Math.random() * 420;
+    star.length = viewportHeight * (0.035 + Math.random() * 0.045);
+    star.travel = viewportHeight * (0.22 + Math.random() * 0.2);
+    star.brightness = 0.54 + Math.random() * 0.46;
+    star.direction.copy(direction);
+    star.start
+        .copy(camera.position)
+        .addScaledVector(shootingStarViewDirection, depth)
+        .addScaledVector(shootingStarRight, x)
+        .addScaledVector(shootingStarUp, y);
+}
+
+function resetShootingStars() {
+    for (const star of shootingStarPool) star.active = false;
+    nextShootingStarAt = performance.now() + randomShootingStarInterval();
+}
+
+function randomShootingStarInterval() {
+    return -Math.log(Math.max(0.001, Math.random())) * shootingStarMeanInterval;
 }
 
 function updateIdleAutoRotation(now: number, delta: number) {
@@ -807,6 +974,7 @@ function onContextLost(event: Event) {
 
 function resetFrameClock() {
     lastFrame = performance.now();
+    nextShootingStarAt = lastFrame + randomShootingStarInterval();
 }
 
 function dispose() {
@@ -824,6 +992,7 @@ function dispose() {
     controls?.dispose();
     effects?.dispose();
     effects = undefined;
+    shootingStars = undefined;
     hierarchyEdges = undefined;
     selectionPath = undefined;
     cameraController = undefined;
