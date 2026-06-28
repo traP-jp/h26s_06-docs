@@ -222,7 +222,7 @@ func TestParseTraqEventChannelViewersChangedAcceptsSnakeChannelID(t *testing.T) 
 	}
 }
 
-func TestParseTraqStreamEventViewStateReturnsViewerUpdate(t *testing.T) {
+func TestParseTraqStreamEventViewStateDoesNotReturnViewerUpdate(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{{ID: "channel-b", Name: "general"}})
 	if err != nil {
 		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
@@ -245,28 +245,8 @@ func TestParseTraqStreamEventViewStateReturnsViewerUpdate(t *testing.T) {
 	if len(event.Triggers) != 1 {
 		t.Fatalf("len(Triggers) = %d, want 1", len(event.Triggers))
 	}
-	if len(event.ViewerUpdates) != 1 {
-		t.Fatalf("len(ViewerUpdates) = %d, want 1", len(event.ViewerUpdates))
-	}
-	update := event.ViewerUpdates[0]
-	if !update.SampledChannelIDs["channel-b"] {
-		t.Fatal("channel-b was not marked as sampled")
-	}
-	if len(update.Rows) != 1 {
-		t.Fatalf("len(Rows) = %d, want 1", len(update.Rows))
-	}
-	row := update.Rows[0]
-	if row.UserID == "" {
-		t.Fatal("row.UserID was empty")
-	}
-	if row.ChannelID != "channel-b" {
-		t.Fatalf("row.ChannelID = %q, want channel-b", row.ChannelID)
-	}
-	if row.ChannelName != "general" {
-		t.Fatalf("row.ChannelName = %q, want general", row.ChannelName)
-	}
-	if row.State != "editing" {
-		t.Fatalf("row.State = %q, want editing", row.State)
+	if len(event.ViewerUpdates) != 0 {
+		t.Fatalf("len(ViewerUpdates) = %d, want 0", len(event.ViewerUpdates))
 	}
 }
 
@@ -316,6 +296,32 @@ func TestParseTraqStreamEventChannelViewersChangedReturnsViewerUpdate(t *testing
 	}
 	if !row.UpdatedAt.Equal(updatedAt) {
 		t.Fatalf("row.UpdatedAt = %s, want %s", row.UpdatedAt, updatedAt)
+	}
+}
+
+func TestParseTraqStreamEventChannelViewersChangedWithoutViewersDoesNotReturnViewerUpdate(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "channel-a", Name: "random"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+	srv, err := newServer(config{})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	payload := mustMarshalEvent(t, wsEvent{
+		Type: "CHANNEL_VIEWERS_CHANGED",
+		Body: mustMarshalRaw(t, wsChannelViewersChangedBody{ID: "channel-a"}),
+	})
+
+	event, err := srv.parseTraqStreamEvent(context.Background(), "token", payload, state)
+	if err != nil {
+		t.Fatalf("parseTraqStreamEvent returned error: %v", err)
+	}
+	if len(event.Triggers) != 0 {
+		t.Fatalf("len(Triggers) = %d, want 0", len(event.Triggers))
+	}
+	if len(event.ViewerUpdates) != 0 {
+		t.Fatalf("len(ViewerUpdates) = %d, want 0", len(event.ViewerUpdates))
 	}
 }
 

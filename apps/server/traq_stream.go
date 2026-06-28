@@ -238,9 +238,6 @@ func (s *server) parseTraqStreamEvent(ctx context.Context, accessToken string, p
 			return traqStreamEvent{}, err
 		}
 		triggers := make([]triggerPayload, 0, len(body.ViewStates))
-		rows := make([]viewerRow, 0, len(body.ViewStates))
-		sampledChannelIDs := make(map[string]bool)
-		now := time.Now()
 		for _, view := range body.ViewStates {
 			channelID := view.channelID()
 			if view.Key == "" || channelID == "" {
@@ -260,31 +257,9 @@ func (s *server) parseTraqStreamEvent(ctx context.Context, accessToken string, p
 				trigger.To = channelID
 				triggers = append(triggers, trigger)
 			}
-			if state == nil {
-				continue
-			}
-			channelName, ok := state.channelName(channelID)
-			if !ok {
-				continue
-			}
-			rows = append(rows, viewerRow{
-				UserID:      trigger.Usr,
-				ChannelID:   channelID,
-				ChannelName: channelName,
-				State:       view.State,
-				UpdatedAt:   now,
-			})
-			sampledChannelIDs[channelID] = true
 		}
 		traqLogWS("USER_VIEWSTATE_CHANGED viewStates=%d triggers=%d", len(body.ViewStates), len(triggers))
-		result := traqStreamEvent{Triggers: triggers}
-		if len(rows) > 0 {
-			result.ViewerUpdates = []viewerUpdate{{
-				Rows:              rows,
-				SampledChannelIDs: sampledChannelIDs,
-			}}
-		}
-		return result, nil
+		return traqStreamEvent{Triggers: triggers}, nil
 	case "CHANNEL_VIEWERS_CHANGED":
 		var body wsChannelViewersChangedBody
 		if err := json.Unmarshal(event.Body, &body); err != nil {
@@ -300,6 +275,10 @@ func (s *server) parseTraqStreamEvent(ctx context.Context, accessToken string, p
 		}
 		if state == nil {
 			traqLogWS("CHANNEL_VIEWERS_CHANGED channelID=%s", channelID)
+			return traqStreamEvent{}, nil
+		}
+		if body.Viewers == nil {
+			traqLogWS("CHANNEL_VIEWERS_CHANGED channelID=%s viewers omitted", channelID)
 			return traqStreamEvent{}, nil
 		}
 		channelName, ok := state.channelName(channelID)
