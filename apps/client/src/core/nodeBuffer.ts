@@ -1,4 +1,4 @@
-import type { ChannelNode } from "./channelGraph";
+import { ACTIVE_RELATIVE_SCORE_THRESHOLD, type ChannelNode } from "./channelGraph";
 
 const MATRIX_SIZE = 16;
 const COLOR_SIZE = 3;
@@ -25,7 +25,7 @@ export class NodeBuffer {
             const selectedScale = node.id === selectedId ? 1.8 : 1;
             const visible =
                 !activeOnly ||
-                node.relativeScore > 0.08 ||
+                node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD ||
                 node.id === "grand_root" ||
                 node.id === selectedId;
             const baseScale =

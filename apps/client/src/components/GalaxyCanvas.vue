@@ -25,10 +25,11 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
-import type { ChannelGraph } from "../core/channelGraph";
+import { ACTIVE_RELATIVE_SCORE_THRESHOLD, type ChannelGraph } from "../core/channelGraph";
 import { NodeBuffer } from "../core/nodeBuffer";
 import { CameraController } from "../rendering/cameraController";
 import { EffectPool } from "../rendering/effectPool";
+import { HierarchyEdgeBuffer } from "../rendering/hierarchyEdgeBuffer";
 
 const props = defineProps<{
     graph: ChannelGraph;
@@ -67,6 +68,8 @@ let customRotationActive = false;
 let hoverPending = false;
 let resizeObserver: ResizeObserver | undefined;
 let nodeBuffer = new NodeBuffer(props.graph.nodes.length);
+let hierarchyEdgeBuffer = new HierarchyEdgeBuffer(props.graph.nodes);
+let hierarchyEdgeBaseColors = createEdgeBaseColors();
 const projectedNode = new Vector3();
 const hoverPointer = new Vector2();
 const instanceColor = new Color();
@@ -173,23 +176,18 @@ function createNodeMesh() {
 }
 
 function createEdges() {
-    const positions: number[] = [];
-    const colors: number[] = [];
-    const color = new Color();
-    for (const node of props.graph.nodes) {
-        if (!hasHierarchyEdge(node)) continue;
-        const parent = props.graph.get(node.parentId);
-        if (!parent) continue;
-        positions.push(parent.x, parent.y, parent.z, node.x, node.y, node.z);
-        color.set(isGrandRootEdge(node) ? "#7b8798" : parent.color);
-        colors.push(color.r, color.g, color.b);
-        color.set(isGrandRootEdge(node) ? "#7b8798" : node.color);
-        colors.push(color.r, color.g, color.b);
-    }
+    const positions = new Float32Array(hierarchyEdgeBuffer.capacity * 6);
+    const colors = new Float32Array(hierarchyEdgeBuffer.capacity * 6);
     const geometry = new BufferGeometry();
-    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-    geometry.userData.baseColors = new Float32Array(colors);
+    geometry.setAttribute(
+        "position",
+        new Float32BufferAttribute(positions, 3).setUsage(DynamicDrawUsage)
+    );
+    geometry.setAttribute(
+        "color",
+        new Float32BufferAttribute(colors, 3).setUsage(DynamicDrawUsage)
+    );
+    geometry.setDrawRange(0, 0);
     const lines = new LineSegments(
         geometry,
         new LineBasicMaterial({
@@ -212,21 +210,26 @@ function updateEdges(now: number) {
     const colorAttribute = hierarchyEdges.geometry.getAttribute("color") as Float32BufferAttribute;
     const posArray = positionAttribute.array as Float32Array;
     const colArray = colorAttribute.array as Float32Array;
-    const baseColors = hierarchyEdges.geometry.userData.baseColors as Float32Array;
+    hierarchyEdgeBuffer.update(props.graph.nodes, props.activeOnly);
+    hierarchyEdges.geometry.setDrawRange(0, hierarchyEdgeBuffer.count * 2);
 
     let offset = 0;
-    let colOffset = 0;
-
-    for (const node of props.graph.nodes) {
-        if (!hasHierarchyEdge(node)) continue;
-        const parent = props.graph.get(node.parentId);
-        if (!parent) continue;
+    for (let edgeIndex = 0; edgeIndex < hierarchyEdgeBuffer.count; edgeIndex += 1) {
+        const nodeIndex = hierarchyEdgeBuffer.nodeIndices[edgeIndex] ?? -1;
+        const parentIndex = hierarchyEdgeBuffer.parentIndices[nodeIndex] ?? -1;
+        const node = props.graph.nodes[nodeIndex];
+        const parent = props.graph.nodes[parentIndex];
+        if (!node || !parent) continue;
 
         const alphaScale = isGrandRootEdge(node) ? 0.26 : 1;
+        const activityScale = props.activeOnly
+            ? 0.3 + Math.sqrt(hierarchyEdgeBuffer.activity[edgeIndex] ?? 0) * 0.7
+            : 1;
         const alpha =
             Math.min(parent.visibilityAlpha, node.visibilityAlpha) *
             Math.min(parent.emphasis, node.emphasis) *
-            alphaScale;
+            alphaScale *
+            activityScale;
 
         const wxParent = Math.sin(now * 0.0008 + parent.index * 1.2) * 1.5;
         const wyParent = Math.cos(now * 0.0009 + parent.index * 0.8) * 1.5;
@@ -243,19 +246,12 @@ function updateEdges(now: number) {
         posArray[offset++] = node.y + wyNode;
         posArray[offset++] = node.z + wzNode;
 
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
-        colArray[colOffset] = baseColors[colOffset]! * alpha;
-        colOffset++;
+        const baseOffset = nodeIndex * 6;
+        const colorOffset = edgeIndex * 6;
+        for (let component = 0; component < 6; component += 1) {
+            colArray[colorOffset + component] =
+                (hierarchyEdgeBaseColors[baseOffset + component] ?? 0) * alpha;
+        }
     }
     positionAttribute.needsUpdate = true;
     colorAttribute.needsUpdate = true;
@@ -267,8 +263,29 @@ function hasHierarchyEdge(node: ChannelGraph["nodes"][number]): node is Hierarch
     return node.parentId !== null;
 }
 
-function isGrandRootEdge(node: HierarchyEdgeNode) {
+function isGrandRootEdge(node: ChannelGraph["nodes"][number]) {
     return node.parentId === "grand_root";
+}
+
+function createEdgeBaseColors() {
+    const colors = new Float32Array(props.graph.nodes.length * 6);
+    const color = new Color();
+    for (const node of props.graph.nodes) {
+        if (!hasHierarchyEdge(node)) continue;
+        const parentIndex = hierarchyEdgeBuffer.parentIndices[node.index] ?? -1;
+        const parent = props.graph.nodes[parentIndex];
+        if (!parent) continue;
+        const offset = node.index * 6;
+        color.set(isGrandRootEdge(node) ? rootEdgeColor : parent.color);
+        colors[offset] = color.r;
+        colors[offset + 1] = color.g;
+        colors[offset + 2] = color.b;
+        color.set(isGrandRootEdge(node) ? rootEdgeColor : node.color);
+        colors[offset + 3] = color.r;
+        colors[offset + 4] = color.g;
+        colors[offset + 5] = color.b;
+    }
+    return colors;
 }
 
 function createSelectionPath() {
@@ -304,7 +321,6 @@ function draw(now: number) {
     nodes.instanceMatrix.needsUpdate = true;
     updateEdges(now);
     updateSelectionPathPositions(now);
-    if (hierarchyEdges) hierarchyEdges.visible = !props.activeOnly;
     cameraController?.updateTransition(props.graph, now);
     if (!customRotationActive) controls?.update();
     constrainRotationCenterToViewport();
@@ -508,7 +524,7 @@ function isNodeRendered(node: ChannelGraph["nodes"][number]) {
     if (node.visibilityAlpha < 0.05) return false;
     return (
         !props.activeOnly ||
-        node.relativeScore > 0.08 ||
+        node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD ||
         node.id === "grand_root" ||
         node.id === props.selectedId
     );
@@ -566,6 +582,8 @@ watch(
     () => {
         dispose();
         nodeBuffer = new NodeBuffer(props.graph.nodes.length);
+        hierarchyEdgeBuffer = new HierarchyEdgeBuffer(props.graph.nodes);
+        hierarchyEdgeBaseColors = createEdgeBaseColors();
         initialise();
     }
 );

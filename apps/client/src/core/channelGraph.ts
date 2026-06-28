@@ -19,7 +19,7 @@ const MOVEMENT_SCORE_AMOUNT = 0.25;
 const ANCESTOR_SCORE_FACTOR = 0.45;
 const SCORE_DECAY_TIME_SCALE = 300;
 const RELATIVE_SCORE_SCALE_FLOOR = 2.2;
-const ACTIVE_RELATIVE_SCORE_THRESHOLD = 0.08;
+export const ACTIVE_RELATIVE_SCORE_THRESHOLD = 0.08;
 
 export interface ChannelNode {
     index: number;
