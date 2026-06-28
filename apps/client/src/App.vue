@@ -74,6 +74,7 @@ const authState = ref<AuthState>(isDemoMode ? "authenticated" : "checking");
 const currentUser = ref<AuthUser>();
 const focusId = ref<string | undefined>();
 const focusRevision = ref(0);
+const lastSelectedId = ref<string | undefined>();
 const settingsOpen = ref(false);
 const shortcutsOpen = ref(false);
 const detailsOpen = ref(false);
@@ -138,6 +139,7 @@ function closeSettings(): void {
 const keyboardController = new KeyboardController({
     getSelected: () => selected.value,
     getSelectedId: () => selectedId.value,
+    getLastSelectedId: () => lastSelectedId.value,
     setSelectedId: id => {
         selectedId.value = id;
     },
@@ -389,6 +391,7 @@ onMounted(() => {
 });
 
 watch(selectedId, (newId, oldId) => {
+    if (oldId) lastSelectedId.value = oldId;
     detailsOpen.value = Boolean(newId);
     viewers.value = [];
     bufferedViewers = undefined;

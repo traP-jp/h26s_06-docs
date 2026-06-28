@@ -19,6 +19,7 @@ interface SelectedChannel {
 interface KeyboardControllerOptions {
     getSelected: () => SelectedChannel | undefined;
     getSelectedId: () => string | undefined;
+    getLastSelectedId: () => string | undefined;
     setSelectedId: (id: string | undefined) => void;
     isShortcutsOpen: () => boolean;
     isSettingsOpen: () => boolean;
@@ -63,6 +64,11 @@ export class KeyboardController {
     }
 
     navigate(target: KeyboardNavigationTarget): boolean {
+        if (!this.options.getSelectedId()) {
+            this.options.setSelectedId(this.options.getLastSelectedId() ?? GRAND_ROOT_ID);
+            return true;
+        }
+
         const nextSelectedId = this.options.getSelected()?.navigation?.[target];
         if (!nextSelectedId) return false;
 

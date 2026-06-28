@@ -4,6 +4,7 @@ import { KeyboardController, type KeyboardNavigation } from "../src/core/keyboar
 
 interface ControllerState {
     selectedId?: string;
+    lastSelectedId?: string;
     navigation?: KeyboardNavigation;
     shortcutsOpen: boolean;
     settingsOpen: boolean;
@@ -28,6 +29,7 @@ function setup(initialState: Partial<ControllerState> = {}) {
     const controller = new KeyboardController({
         getSelected: () => (state.navigation ? { navigation: state.navigation } : undefined),
         getSelectedId: () => state.selectedId,
+        getLastSelectedId: () => state.lastSelectedId,
         setSelectedId: id => {
             state.selectedId = id;
         },
@@ -109,6 +111,25 @@ describe("KeyboardController", () => {
 
         expect(controller.navigate("parentId")).toBe(true);
         expect(state.selectedId).toBe("parent");
+    });
+
+    test("restores the last selection before navigating when no node is selected", () => {
+        const { controller, state } = setup({
+            lastSelectedId: "previous",
+            navigation: { parentId: "parent" },
+        });
+
+        expect(controller.navigate("parentId")).toBe(true);
+        expect(state.selectedId).toBe("previous");
+    });
+
+    test("selects grand root without a current or previous selection", () => {
+        const { controller, state } = setup({
+            navigation: { parentId: "parent" },
+        });
+
+        expect(controller.navigate("parentId")).toBe(true);
+        expect(state.selectedId).toBe("grand_root");
     });
 
     test("does not change the selection when the navigation target is absent", () => {
