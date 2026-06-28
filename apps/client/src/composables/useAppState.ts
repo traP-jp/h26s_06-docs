@@ -4,14 +4,11 @@ import type { ChannelGraph, ChannelNode } from "../core/channelGraph";
 import type { ConnectionState, TriggerPayload } from "../types/api";
 
 const EVENT_TOAST_DURATION_MS = 5200;
-const MAX_EVENT_TOASTS = 4;
 
 interface EventToast {
     id: number;
     tone: "message" | "move";
-    title: string;
     detail: string;
-    time: string;
 }
 
 export interface NavigationTargets {
@@ -85,9 +82,7 @@ export function useAppState() {
         updatedAt.value = time;
         pushEventToast({
             tone: trigger.type === "msg" ? "message" : "move",
-            title: trigger.type === "msg" ? "メッセージを検知" : "ユーザー移動を検知",
             detail: lastEvent.value,
-            time,
         });
     }
 
@@ -107,11 +102,8 @@ export function useAppState() {
     function pushEventToast(toast: Omit<EventToast, "id">) {
         const id = nextToastId++;
 
-        eventToasts.value = [...eventToasts.value, { ...toast, id }].slice(-MAX_EVENT_TOASTS);
-        for (const staleId of toastTimers.keys()) {
-            if (eventToasts.value.some(current => current.id === staleId)) continue;
-            clearEventToastTimer(staleId);
-        }
+        clearEventToasts();
+        eventToasts.value = [{ ...toast, id }];
 
         toastTimers.set(
             id,

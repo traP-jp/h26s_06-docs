@@ -482,10 +482,6 @@ onBeforeUnmount(() => {
                         aria-hidden="true"
                     />
                     <div class="event-toast__body">
-                        <div class="event-toast__meta">
-                            <strong>{{ toast.title }}</strong>
-                            <time>{{ toast.time }}</time>
-                        </div>
                         <p>{{ toast.detail }}</p>
                     </div>
                     <button

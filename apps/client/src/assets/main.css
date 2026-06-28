@@ -290,26 +290,24 @@ dd {
     right: 24px;
     z-index: 4;
     display: grid;
-    width: min(340px, calc(100vw - 48px));
-    gap: 10px;
+    width: min(260px, calc(100vw - 48px));
     pointer-events: none;
 }
 
 .event-toast {
     position: relative;
     display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) 28px;
-    gap: 12px;
-    align-items: start;
+    grid-template-columns: 7px minmax(0, 1fr) 22px;
+    gap: 9px;
+    align-items: center;
     overflow: hidden;
-    min-height: 74px;
+    min-height: 42px;
     border: 1px solid rgb(140 190 255 / 18%);
-    border-radius: 8px;
-    padding: 13px 11px 13px 13px;
+    border-radius: 6px;
+    padding: 8px 8px 8px 10px;
     background:
-        linear-gradient(135deg, rgb(6 15 30 / 92%), rgb(10 17 25 / 80%)),
-        rgb(5 12 25 / 88%);
-    box-shadow: 0 18px 60px rgb(0 0 0 / 34%);
+        linear-gradient(135deg, rgb(6 15 30 / 92%), rgb(10 17 25 / 80%)), rgb(5 12 25 / 88%);
+    box-shadow: 0 12px 42px rgb(0 0 0 / 28%);
     backdrop-filter: blur(18px);
     pointer-events: auto;
 }
@@ -327,9 +325,8 @@ dd {
 }
 
 .event-toast__signal {
-    width: 8px;
-    height: 8px;
-    margin-top: 5px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: #75caff;
     box-shadow: 0 0 18px rgb(117 202 255 / 72%);
@@ -344,51 +341,27 @@ dd {
     min-width: 0;
 }
 
-.event-toast__meta {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-    min-width: 0;
-}
-
-.event-toast__meta strong {
-    overflow: hidden;
-    color: #d9edff;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.event-toast__meta time {
-    flex-shrink: 0;
-    color: #62768f;
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 10px;
-}
-
 .event-toast__body p {
     overflow: hidden;
-    max-height: 36px;
-    margin: 7px 0 0;
+    margin: 0;
     color: #adcae6;
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: 11px;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .event-toast__close {
     display: grid;
     place-items: center;
-    width: 28px;
-    height: 28px;
+    width: 22px;
+    height: 22px;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: 4px;
     color: #7187a4;
     background: transparent;
     cursor: pointer;
-    font-size: 19px;
+    font-size: 16px;
     line-height: 1;
 }
 
@@ -623,7 +596,7 @@ dd {
     }
 
     .event-toast {
-        min-height: 68px;
+        min-height: 42px;
     }
 
     .details {
