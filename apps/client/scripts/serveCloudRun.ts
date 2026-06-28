@@ -4,9 +4,10 @@ import { extname, normalize, resolve, sep } from "node:path";
 
 const distRoot = resolve(import.meta.dir, "../dist");
 const port = getPort(process.env.PORT);
-const serverUpstream = normalizeUpstream(
-    process.env.SERVER_UPSTREAM ?? "http://localhost:8080",
-);
+const backendProxyEnabled = isTruthy(process.env.GCLOUD_BACKEND_PROXY);
+const serverUpstream = backendProxyEnabled
+    ? normalizeUpstream(process.env.SERVER_UPSTREAM ?? "http://localhost:8080")
+    : null;
 
 const contentTypes = new Map([
     [".css", "text/css; charset=utf-8"],
@@ -28,7 +29,10 @@ Bun.serve({
         const url = new URL(request.url);
 
         if (url.pathname.startsWith("/api")) {
-            return proxyApiRequest(request, url);
+            if (serverUpstream === null) {
+                return new Response("backend proxy disabled", { status: 404 });
+            }
+            return proxyApiRequest(request, url, serverUpstream);
         }
 
         if (url.pathname === "/healthz") {
@@ -39,7 +43,11 @@ Bun.serve({
     },
 });
 
-console.info(`client listening on :${port}; proxying /api to ${serverUpstream}`);
+console.info(
+    serverUpstream === null
+        ? `client listening on :${port}; backend proxy disabled`
+        : `client listening on :${port}; proxying /api to ${serverUpstream}`,
+);
 
 function getPort(value: string | undefined): number {
     const parsedPort = Number.parseInt(value ?? "", 10);
@@ -54,8 +62,23 @@ function normalizeUpstream(value: string): URL {
     return new URL(withProtocol);
 }
 
-async function proxyApiRequest(request: Request, url: URL): Promise<Response> {
-    const target = new URL(url.pathname + url.search, serverUpstream);
+function isTruthy(value: string | undefined): boolean {
+    const normalizedValue = value?.toLowerCase();
+
+    return (
+        normalizedValue === "1" ||
+        normalizedValue === "true" ||
+        normalizedValue === "yes" ||
+        normalizedValue === "on"
+    );
+}
+
+async function proxyApiRequest(
+    request: Request,
+    url: URL,
+    upstream: URL,
+): Promise<Response> {
+    const target = new URL(url.pathname + url.search, upstream);
     const headers = new Headers(request.headers);
     headers.delete("host");
 
