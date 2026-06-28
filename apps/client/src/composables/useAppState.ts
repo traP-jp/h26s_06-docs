@@ -1,7 +1,20 @@
 import { computed, ref, shallowRef, watch } from "vue";
 
-import type { ChannelGraph } from "../core/channelGraph";
+import type { ChannelGraph, ChannelNode } from "../core/channelGraph";
 import type { ConnectionState, TriggerPayload } from "../types/api";
+
+export interface NavigationTargets {
+    parentId?: string;
+    childId?: string;
+    previousSiblingId?: string;
+    nextSiblingId?: string;
+}
+
+export type SelectedChannel = ChannelNode & {
+    path: string;
+    pathHref: string;
+    navigation: NavigationTargets;
+};
 
 export function useAppState() {
     // ChannelGraph は毎フレーム自身を更新するため、Vue の深い監視から除外する。
@@ -29,8 +42,10 @@ export function useAppState() {
             path: `# ${channelPath}`,
             pathHref: `https://q.trap.jp/channels/${channelPath.replaceAll(" / ", "/")}`,
             navigation:
-                graph.value?.navigationTargets(channel.id, rememberedChildByParent.value[channel.id]) ??
-                {},
+                graph.value?.navigationTargets(
+                    channel.id,
+                    rememberedChildByParent.value[channel.id]
+                ) ?? {},
         };
     });
 
