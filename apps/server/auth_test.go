@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -104,6 +105,9 @@ func TestHandleCallbackStoresTraqUserIDInSession(t *testing.T) {
 	if session.TraqUserID != "user-id" {
 		t.Fatalf("TraqUserID = %q, want user-id", session.TraqUserID)
 	}
+	if session.TraqName != "user_name" {
+		t.Fatalf("TraqName = %q, want user_name", session.TraqName)
+	}
 }
 
 func TestEnsureSessionTraqUserIDUsesCachedValue(t *testing.T) {
@@ -160,5 +164,72 @@ func TestEnsureSessionTraqUserIDFetchesAndStoresMissingValue(t *testing.T) {
 	}
 	if got := srv.sessions["session-id"].TraqUserID; got != "fetched-user" {
 		t.Fatalf("stored TraqUserID = %q, want fetched-user", got)
+	}
+	if got := srv.sessions["session-id"].TraqName; got != "fetched_name" {
+		t.Fatalf("stored TraqName = %q, want fetched_name", got)
+	}
+}
+
+func TestHandleMeAddsTraqNameAndCachesUserInfo(t *testing.T) {
+	srv, err := newServer(config{
+		traqBaseURL:   "https://example.test",
+		oauthClientID: "client-id",
+	})
+	if err != nil {
+		t.Fatalf("newServer returned error: %v", err)
+	}
+	srv.sessions["session-id"] = authSession{
+		Token:     tokenResponse{AccessToken: "access-token"},
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	requests := 0
+	srv.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.Path != "/api/v3/users/me" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		return jsonResponse(r, `{"id":"user-id","name":"traq_id"}`), nil
+	})}
+
+	for index := 0; index < 2; index++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-id"})
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d status = %d, want %d body=%q", index, rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var payload meResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("request %d response is invalid JSON: %v", index, err)
+		}
+		if !payload.Authenticated {
+			t.Fatalf("request %d authenticated = false, want true", index)
+		}
+		if !payload.OAuthConfigured {
+			t.Fatalf("request %d oauthConfigured = false, want true", index)
+		}
+		if payload.Name != "traq_id" {
+			t.Fatalf("request %d name = %q, want traq_id", index, payload.Name)
+		}
+
+		var raw map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+			t.Fatalf("request %d response is invalid JSON object: %v", index, err)
+		}
+		if _, ok := raw["id"]; ok {
+			t.Fatalf("request %d response contains unexpected id key: %v", index, raw)
+		}
+		if _, ok := raw["displayName"]; ok {
+			t.Fatalf("request %d response contains unexpected displayName key: %v", index, raw)
+		}
+	}
+
+	if requests != 1 {
+		t.Fatalf("traQ users/me requests = %d, want 1", requests)
+	}
+	if got := srv.sessions["session-id"].TraqName; got != "traq_id" {
+		t.Fatalf("stored TraqName = %q, want traq_id", got)
 	}
 }
