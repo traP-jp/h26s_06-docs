@@ -26,6 +26,11 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
 import { ACTIVE_RELATIVE_SCORE_THRESHOLD, type ChannelGraph } from "../core/channelGraph";
+import type {
+    CameraMoveDirection,
+    CameraRotationDirection,
+    CameraZoomDirection,
+} from "../core/keyboardController";
 import { NodeBuffer } from "../core/nodeBuffer";
 import { CameraController } from "../rendering/cameraController";
 import { EffectPool } from "../rendering/effectPool";
@@ -49,6 +54,16 @@ const rootEdgeColor = "#7b8798";
 const rootEdgeVisualOpacity = 0.26;
 const idleAutoRotationDelay = 5000;
 const idleAutoRotationRadiansPerSecond = 0.012;
+const keyboardPanAcceleration = 920;
+const keyboardPanMaxSpeed = 520;
+const keyboardPanDamping = 7.5;
+const keyboardRotationAcceleration = 760;
+const keyboardRotationMaxSpeed = 430;
+const keyboardRotationDamping = 8;
+const keyboardZoomAcceleration = 3.2;
+const keyboardZoomMaxSpeed = 1.8;
+const keyboardZoomDamping = 6;
+const keyboardMotionEpsilon = 0.01;
 
 let renderer: WebGLRenderer | undefined;
 let scene: Scene | undefined;
@@ -76,6 +91,14 @@ let hierarchyEdgeBaseColors = createEdgeBaseColors();
 const projectedNode = new Vector3();
 const hoverPointer = new Vector2();
 const instanceColor = new Color();
+const activeCameraMoveDirections = new Set<CameraMoveDirection>();
+const activeCameraZoomDirections = new Set<CameraZoomDirection>();
+const activeCameraRotationDirections = new Set<CameraRotationDirection>();
+const keyboardPanVelocity = new Vector2();
+const keyboardRotationVelocity = new Vector2();
+const keyboardPanInput = new Vector2();
+const keyboardRotationInput = new Vector2();
+let keyboardZoomVelocity = 0;
 const NODE_PICK_RADIUS = 28;
 
 function initialise() {
@@ -326,6 +349,7 @@ function draw(now: number) {
     nodes.instanceMatrix.needsUpdate = true;
     updateEdges(now);
     updateSelectionPathPositions(now);
+    updateKeyboardCameraMotion(delta);
     cameraController?.updateTransition(props.graph, now);
     updateIdleAutoRotation(now, delta);
     if (!customRotationActive) controls?.update();
@@ -381,6 +405,174 @@ function noteCameraInteraction() {
     lastCameraInteractionAt = performance.now();
 }
 
+function setCameraMoveActive(direction: CameraMoveDirection, active: boolean) {
+    setActiveDirection(activeCameraMoveDirections, direction, active);
+}
+
+function setCameraZoomActive(direction: CameraZoomDirection, active: boolean) {
+    setActiveDirection(activeCameraZoomDirections, direction, active);
+}
+
+function setCameraRotationActive(direction: CameraRotationDirection, active: boolean) {
+    setActiveDirection(activeCameraRotationDirections, direction, active);
+}
+
+function releaseCameraControls() {
+    activeCameraMoveDirections.clear();
+    activeCameraZoomDirections.clear();
+    activeCameraRotationDirections.clear();
+    resetKeyboardCameraMotion();
+}
+
+function setActiveDirection<T>(directions: Set<T>, direction: T, active: boolean) {
+    if (active) directions.add(direction);
+    else directions.delete(direction);
+}
+
+function updateKeyboardCameraMotion(delta: number) {
+    const element = renderer?.domElement;
+    if (!element || !cameraController) return;
+
+    const panInput = cameraMoveInput();
+    const rotationInput = cameraRotationInput();
+    const zoomInput = cameraZoomInput();
+    const hasInput = panInput.lengthSq() > 0 || rotationInput.lengthSq() > 0 || zoomInput !== 0;
+
+    if (!hasInput && !hasKeyboardCameraMotion()) return;
+    if (hasInput) cameraController.cancelTransition();
+
+    keyboardPanVelocity.set(
+        updateKeyboardVelocity(
+            keyboardPanVelocity.x,
+            panInput.x,
+            keyboardPanAcceleration,
+            keyboardPanMaxSpeed,
+            keyboardPanDamping,
+            delta
+        ),
+        updateKeyboardVelocity(
+            keyboardPanVelocity.y,
+            panInput.y,
+            keyboardPanAcceleration,
+            keyboardPanMaxSpeed,
+            keyboardPanDamping,
+            delta
+        )
+    );
+    keyboardRotationVelocity.set(
+        updateKeyboardVelocity(
+            keyboardRotationVelocity.x,
+            rotationInput.x,
+            keyboardRotationAcceleration,
+            keyboardRotationMaxSpeed,
+            keyboardRotationDamping,
+            delta
+        ),
+        updateKeyboardVelocity(
+            keyboardRotationVelocity.y,
+            rotationInput.y,
+            keyboardRotationAcceleration,
+            keyboardRotationMaxSpeed,
+            keyboardRotationDamping,
+            delta
+        )
+    );
+    keyboardZoomVelocity = updateKeyboardVelocity(
+        keyboardZoomVelocity,
+        zoomInput,
+        keyboardZoomAcceleration,
+        keyboardZoomMaxSpeed,
+        keyboardZoomDamping,
+        delta
+    );
+
+    if (!hasKeyboardCameraMotion()) return;
+
+    noteCameraInteraction();
+    if (keyboardPanVelocity.lengthSq() > 0) {
+        cameraController.moveInView(
+            keyboardPanVelocity.x * delta,
+            keyboardPanVelocity.y * delta,
+            element.clientHeight
+        );
+    }
+    if (Math.abs(keyboardZoomVelocity) > 0) {
+        cameraController.zoomBy(Math.exp(-keyboardZoomVelocity * delta));
+    }
+    if (keyboardRotationVelocity.lengthSq() > 0) {
+        rotateAroundSelectedNode(
+            keyboardRotationVelocity.x * delta,
+            keyboardRotationVelocity.y * delta
+        );
+    }
+}
+
+function cameraMoveInput() {
+    keyboardPanInput.set(
+        directionAxis(activeCameraMoveDirections, "left", "right"),
+        directionAxis(activeCameraMoveDirections, "up", "down")
+    );
+    return normalizeKeyboardInput(keyboardPanInput);
+}
+
+function cameraRotationInput() {
+    keyboardRotationInput.set(
+        directionAxis(activeCameraRotationDirections, "left", "right"),
+        directionAxis(activeCameraRotationDirections, "up", "down")
+    );
+    return normalizeKeyboardInput(keyboardRotationInput);
+}
+
+function cameraZoomInput() {
+    return (
+        Number(activeCameraZoomDirections.has("in")) - Number(activeCameraZoomDirections.has("out"))
+    );
+}
+
+function directionAxis<T>(directions: Set<T>, negative: T, positive: T) {
+    return Number(directions.has(positive)) - Number(directions.has(negative));
+}
+
+function normalizeKeyboardInput(input: Vector2) {
+    const length = input.length();
+    if (length > 1) input.multiplyScalar(1 / length);
+    return input;
+}
+
+function updateKeyboardVelocity(
+    current: number,
+    input: number,
+    acceleration: number,
+    maxSpeed: number,
+    damping: number,
+    delta: number
+) {
+    if (input !== 0) {
+        return clamp(current + input * acceleration * delta, -maxSpeed, maxSpeed);
+    }
+
+    const next = current * Math.exp(-damping * delta);
+    return Math.abs(next) < keyboardMotionEpsilon ? 0 : next;
+}
+
+function hasKeyboardCameraMotion() {
+    return (
+        keyboardPanVelocity.lengthSq() > keyboardMotionEpsilon ** 2 ||
+        keyboardRotationVelocity.lengthSq() > keyboardMotionEpsilon ** 2 ||
+        Math.abs(keyboardZoomVelocity) > keyboardMotionEpsilon
+    );
+}
+
+function resetKeyboardCameraMotion() {
+    keyboardPanVelocity.set(0, 0);
+    keyboardRotationVelocity.set(0, 0);
+    keyboardZoomVelocity = 0;
+}
+
+function clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
+}
+
 function onPointerDown(event: PointerEvent) {
     if (props.focusId) cameraController?.cancelTransition();
     pointerDown.set(event.clientX, event.clientY);
@@ -398,6 +590,7 @@ function centerInitialCamera() {
 }
 
 function updateCameraTarget(id: string | undefined) {
+    resetKeyboardCameraMotion();
     cameraController?.focus(props.graph, id);
 }
 
@@ -628,6 +821,13 @@ watch(
 
 onMounted(initialise);
 onBeforeUnmount(dispose);
+
+defineExpose({
+    setCameraMoveActive,
+    setCameraZoomActive,
+    setCameraRotationActive,
+    releaseCameraControls,
+});
 </script>
 
 <template>

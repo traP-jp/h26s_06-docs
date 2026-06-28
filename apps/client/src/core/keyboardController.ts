@@ -6,6 +6,9 @@ export interface KeyboardNavigation {
 }
 
 export type KeyboardNavigationTarget = keyof KeyboardNavigation;
+export type CameraMoveDirection = "up" | "down" | "left" | "right";
+export type CameraZoomDirection = "in" | "out";
+export type CameraRotationDirection = "up" | "down" | "left" | "right";
 
 interface SelectedChannel {
     navigation?: KeyboardNavigation;
@@ -19,6 +22,10 @@ interface KeyboardControllerOptions {
     onMuteToggle: () => void;
     onSettingsOpen: () => void;
     onSettingsClose: () => void;
+    onCameraMoveChange: (direction: CameraMoveDirection, active: boolean) => void;
+    onCameraZoomChange: (direction: CameraZoomDirection, active: boolean) => void;
+    onCameraRotateChange: (direction: CameraRotationDirection, active: boolean) => void;
+    onCameraControlsRelease: () => void;
 }
 
 export class KeyboardController {
@@ -48,5 +55,21 @@ export class KeyboardController {
 
         this.options.setSelectedId(nextSelectedId);
         return true;
+    }
+
+    setCameraMoveActive(direction: CameraMoveDirection, active: boolean): void {
+        this.options.onCameraMoveChange(direction, active);
+    }
+
+    setCameraZoomActive(direction: CameraZoomDirection, active: boolean): void {
+        this.options.onCameraZoomChange(direction, active);
+    }
+
+    setCameraRotationActive(direction: CameraRotationDirection, active: boolean): void {
+        this.options.onCameraRotateChange(direction, active);
+    }
+
+    releaseCameraControls(): void {
+        this.options.onCameraControlsRelease();
     }
 }
