@@ -62,14 +62,20 @@ button {
     padding: 16px 20px;
 }
 
-.topbar > div {
+.topbar__brand {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
+}
+
+.topbar__title {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .topbar-logo {
-    height: 32px;
+    height: 42px;
     width: auto;
     flex-shrink: 0;
 }
@@ -471,6 +477,10 @@ dd {
 
     h1 {
         font-size: 17px;
+    }
+
+    .topbar-logo {
+        height: 38px;
     }
 
     .session-pill {
