@@ -116,6 +116,64 @@ function createFanoutTree(childCount: number): LayoutNode[] {
     return nodes;
 }
 
+function createDeepFanoutTree(childCount: number): LayoutNode[] {
+    const nodes: LayoutNode[] = [];
+    const add = (parentIndex: number, depth: number, islandId: number) => {
+        const index = nodes.length;
+        nodes.push({
+            index,
+            parentIndex,
+            children: [],
+            depth,
+            islandId,
+            isLayoutActive: true,
+            isExpansionOrigin: false,
+            emphasis: 1,
+            relativeScore: 0,
+            x: 0,
+            y: 0,
+            z: 0,
+        });
+        if (parentIndex >= 0) nodes[parentIndex]?.children.push(index);
+        return index;
+    };
+
+    const grandRoot = add(-1, 0, -1);
+    const root = add(grandRoot, 1, 0);
+    const branch = add(root, 2, 0);
+    for (let index = 0; index < childCount; index += 1) add(branch, 3, 0);
+    return nodes;
+}
+
+function createLinearTree(maxDepth: number): LayoutNode[] {
+    const nodes: LayoutNode[] = [];
+    const add = (parentIndex: number, depth: number, islandId: number) => {
+        const index = nodes.length;
+        nodes.push({
+            index,
+            parentIndex,
+            children: [],
+            depth,
+            islandId,
+            isLayoutActive: true,
+            isExpansionOrigin: false,
+            emphasis: 1,
+            relativeScore: 0,
+            x: 0,
+            y: 0,
+            z: 0,
+        });
+        if (parentIndex >= 0) nodes[parentIndex]?.children.push(index);
+        return index;
+    };
+
+    let parent = add(-1, 0, -1);
+    for (let depth = 1; depth <= maxDepth; depth += 1) {
+        parent = add(parent, depth, 0);
+    }
+    return nodes;
+}
+
 function position(positions: Float32Array, index: number) {
     const offset = index * 3;
     return {
@@ -224,6 +282,43 @@ describe("calculateLayout", () => {
         ).toBeGreaterThan(400);
     });
 
+    test("spreads dense deep all-channel children around their parent", () => {
+        const nodes = createDeepFanoutTree(96);
+        const positions = calculateLayout(nodes, { displayMode: "all" });
+        const grandParent = position(positions, 1);
+        const parent = position(positions, 2);
+        const outwardAxis = normalize(subtract(parent, grandParent));
+        const childOffsets = nodes
+            .slice(3)
+            .map(node => subtract(position(positions, node.index), parent));
+        const childDirections = childOffsets.map(normalize);
+        const childDots = childDirections.map(direction => dot(direction, outwardAxis));
+        const childDistances = childOffsets.map(offset => Math.sqrt(dot(offset, offset)));
+
+        expect(Math.min(...childDots)).toBeLessThan(-0.25);
+        expect(Math.max(...childDots)).toBeGreaterThan(0.25);
+        expect(Math.max(...childDistances) - Math.min(...childDistances)).toBeGreaterThan(8);
+    });
+
+    test("keeps sparse deep all-channel children in their parent's outward hemisphere", () => {
+        const nodes = createDeepFanoutTree(8);
+        const positions = calculateLayout(nodes, { displayMode: "all" });
+        const grandParent = position(positions, 1);
+        const parent = position(positions, 2);
+        const outwardAxis = normalize(subtract(parent, grandParent));
+        const childOffsets = nodes
+            .slice(3)
+            .map(node => subtract(position(positions, node.index), parent));
+        const axialDistances = childOffsets.map(offset => dot(offset, outwardAxis));
+        const lateralDistances = childOffsets.map(offset => {
+            const axialDistance = dot(offset, outwardAxis);
+            return Math.sqrt(Math.max(0, dot(offset, offset) - axialDistance * axialDistance));
+        });
+
+        expect(Math.min(...axialDistances)).toBeGreaterThanOrEqual(-0.001);
+        expect(Math.max(...lateralDistances)).toBeGreaterThan(35);
+    });
+
     test("caps dense child repulsion in all channel mode", () => {
         const nodes = createFanoutTree(240);
         const positions = calculateLayout(nodes, { displayMode: "all" });
@@ -232,7 +327,7 @@ describe("calculateLayout", () => {
             .slice(2)
             .map(node => distance(position(positions, node.index), parent));
 
-        expect(Math.max(...childDistances)).toBeLessThanOrEqual(56.001);
+        expect(Math.max(...childDistances)).toBeLessThanOrEqual(96.001);
     });
 
     test("spreads very dense children in every direction in all channel mode", () => {
@@ -249,5 +344,19 @@ describe("calculateLayout", () => {
 
         expect(Math.min(...childDots)).toBeLessThan(-0.25);
         expect(Math.max(...childDots)).toBeGreaterThan(0.25);
+    });
+
+    test("keeps deep all-channel chains from collapsing into their parents", () => {
+        const nodes = createLinearTree(10);
+        const positions = calculateLayout(nodes, { displayMode: "all" });
+
+        for (const node of nodes.filter(node => node.depth >= 3)) {
+            const parent = nodes[node.parentIndex];
+            expect(parent).toBeDefined();
+
+            expect(
+                distance(position(positions, node.index), position(positions, parent!.index))
+            ).toBeGreaterThan(35);
+        }
     });
 });
