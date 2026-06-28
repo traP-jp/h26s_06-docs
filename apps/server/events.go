@@ -84,7 +84,7 @@ func (s *server) handleEvents(c echo.Context) error {
 		s.startDemoProducer()
 		s.startDemoSyncProducer()
 	} else {
-		viewerEvents = s.streamCurrentViewerEvents(ctx, session.Token.AccessToken, currentUserID, streamState, liveChannelIDs)
+		viewerEvents = s.streamCurrentViewerEvents(ctx, currentUserID, streamState, liveChannelIDs)
 		go s.consumeTraqStream(ctx, session.Token.AccessToken, liveChannelIDs, streamState, streamHub)
 	}
 

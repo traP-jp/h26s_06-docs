@@ -121,7 +121,7 @@ func TestStreamCurrentViewerEventsEmitsSelectedChannelViewerIDs(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	events := srv.streamCurrentViewerEvents(ctx, "token", "current-user", state, map[string]bool{"general": true})
+	events := srv.streamCurrentViewerEvents(ctx, "current-user", state, map[string]bool{"general": true})
 
 	event := readViewerEvent(t, events)
 	if event.Name != "viewers" {
@@ -149,7 +149,7 @@ func TestStreamCurrentViewerEventsEmitsAfterViewerSignal(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	events := srv.streamCurrentViewerEvents(ctx, "token", "current-user", state, map[string]bool{"general": true})
+	events := srv.streamCurrentViewerEvents(ctx, "current-user", state, map[string]bool{"general": true})
 
 	assertNoViewerEvent(t, events)
 
@@ -183,7 +183,7 @@ func TestStreamCurrentViewerEventsDoesNotEmitAfterStatusClear(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	events := srv.streamCurrentViewerEvents(ctx, "token", "current-user", state, map[string]bool{"general": true})
+	events := srv.streamCurrentViewerEvents(ctx, "current-user", state, map[string]bool{"general": true})
 
 	_ = readViewerEvent(t, events)
 	if !state.clearUserStatus("current-user") {
@@ -198,6 +198,11 @@ func newViewerSnapshotTestServer(t *testing.T, viewersByChannel map[string][]tra
 	t.Helper()
 
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Errorf("Authorization = %q, want Bearer token", got)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		channelID, ok := strings.CutPrefix(r.URL.Path, "/api/v3/channels/")
 		if !ok {
 			http.NotFound(w, r)
@@ -220,7 +225,10 @@ func newViewerSnapshotTestServer(t *testing.T, viewersByChannel map[string][]tra
 	}))
 	t.Cleanup(api.Close)
 
-	srv, err := newServer(config{traqBaseURL: api.URL})
+	srv, err := newServer(config{
+		traqBaseURL:        api.URL,
+		traqBotAccessToken: "token",
+	})
 	if err != nil {
 		t.Fatalf("newServer returned error: %v", err)
 	}
