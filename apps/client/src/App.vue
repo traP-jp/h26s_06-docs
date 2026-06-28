@@ -29,13 +29,15 @@ const {
     selectedId,
     activeOnly,
     eventCount,
-    lastEvent,
     updatedAt,
+    eventToasts,
     renderError,
     selected,
     connectionLabel,
     recordTrigger,
     resetActivity,
+    dismissEventToast,
+    clearEventToasts,
 } = useAppState();
 
 const authState = ref<AuthState>(isDemoMode ? "authenticated" : "checking");
@@ -310,6 +312,7 @@ watch(selectedId, newId => {
 onBeforeUnmount(() => {
     mounted = false;
     authGeneration += 1;
+    clearEventToasts();
     stopStream(false);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     if (backgroundTimer) clearInterval(backgroundTimer);
@@ -606,11 +609,46 @@ onBeforeUnmount(() => {
                     <dd>{{ eventCount }}</dd>
                 </div>
             </dl>
-            <div class="latest">
-                <span>LAST SIGNAL</span>
-                <strong>{{ lastEvent }}</strong>
+            <div class="stream-clock">
+                <span>LAST UPDATE</span>
                 <time>{{ updatedAt || "—" }}</time>
             </div>
+        </aside>
+
+        <aside
+            v-if="authState === 'authenticated'"
+            class="event-toasts"
+            aria-live="polite"
+            aria-label="イベント通知"
+        >
+            <TransitionGroup name="event-toast">
+                <article
+                    v-for="toast in eventToasts"
+                    :key="toast.id"
+                    class="event-toast"
+                    :data-tone="toast.tone"
+                >
+                    <span
+                        class="event-toast__signal"
+                        aria-hidden="true"
+                    />
+                    <div class="event-toast__body">
+                        <div class="event-toast__meta">
+                            <strong>{{ toast.title }}</strong>
+                            <time>{{ toast.time }}</time>
+                        </div>
+                        <p>{{ toast.detail }}</p>
+                    </div>
+                    <button
+                        type="button"
+                        class="event-toast__close"
+                        aria-label="イベント通知を閉じる"
+                        @click="dismissEventToast(toast.id)"
+                    >
+                        ×
+                    </button>
+                </article>
+            </TransitionGroup>
         </aside>
 
         <div
