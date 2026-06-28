@@ -78,4 +78,23 @@ describe("calculateCameraFrame", () => {
         expect(frame.target).toEqual(target);
         expect(frame.distance).toBeGreaterThan(160);
     });
+
+    test("accounts for node radius when fitting a focused group", () => {
+        const compact = calculateCameraFrame(
+            [{ x: 120, y: 0, z: 0, radius: 0 }],
+            { x: 0, y: 0, z: 1 },
+            52,
+            1,
+            { x: 0, y: 0, z: 0 }
+        );
+        const expanded = calculateCameraFrame(
+            [{ x: 120, y: 0, z: 0, radius: 24 }],
+            { x: 0, y: 0, z: 1 },
+            52,
+            1,
+            { x: 0, y: 0, z: 0 }
+        );
+
+        expect(expanded.distance).toBeGreaterThan(compact.distance);
+    });
 });

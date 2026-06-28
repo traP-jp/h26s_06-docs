@@ -2,6 +2,7 @@ export interface CameraFramingPoint {
     x: number;
     y: number;
     z: number;
+    radius?: number;
 }
 
 interface CameraFrame {
@@ -42,8 +43,9 @@ export function calculateCameraFrame(
 
     for (const point of framePoints) {
         const relative = subtract(point, target);
-        const horizontalExtent = Math.abs(dot(relative, right)) + DEFAULT_MARGIN;
-        const verticalExtent = Math.abs(dot(relative, up)) + DEFAULT_MARGIN;
+        const radius = Math.max(0, point.radius ?? 0);
+        const horizontalExtent = Math.abs(dot(relative, right)) + DEFAULT_MARGIN + radius;
+        const verticalExtent = Math.abs(dot(relative, up)) + DEFAULT_MARGIN + radius;
         const depth = dot(relative, direction);
         distance = Math.max(
             distance,

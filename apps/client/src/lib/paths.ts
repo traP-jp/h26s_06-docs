@@ -13,3 +13,7 @@ export function buildAuthCallbackPath(search: string) {
 export function buildEventsPath(demo: boolean) {
     return demo ? "/api/events?demo=1" : "/api/events";
 }
+
+export function buildStatusPath() {
+    return "/api/status";
+}

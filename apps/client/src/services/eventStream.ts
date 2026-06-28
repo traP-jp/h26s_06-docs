@@ -1,9 +1,17 @@
 import axios from "axios";
 
+import { parseViewersPayload } from "./viewersPayload";
+
 import { audioManager } from "../audio/audioManager";
 import { http } from "../lib/http";
 import { buildEventsPath } from "../lib/paths";
-import type { ChannelDictionary, ConnectionState, SyncPayload, TriggerPayload } from "../types/api";
+import type {
+    ChannelDictionary,
+    ConnectionState,
+    SyncPayload,
+    TriggerPayload,
+    ViewersPayload,
+} from "../types/api";
 
 interface SSEEvent {
     event: string;
@@ -16,6 +24,7 @@ interface EventStreamHandlers {
     onInit: (channels: ChannelDictionary) => void;
     onTrigger: (payload: TriggerPayload) => void;
     onSync: (payload: SyncPayload) => void;
+    onViewers: (payload: ViewersPayload) => void;
     onMalformedEvent?: (eventName: string) => void;
     onConnectionError?: () => boolean | Promise<boolean>;
 }
@@ -106,6 +115,15 @@ export class EventStream {
                     this.handlers.onSync(payload);
                 } else {
                     this.handlers.onMalformedEvent?.("sync");
+                }
+                break;
+            }
+            case "viewers": {
+                const payload = parseViewersPayload(data);
+                if (payload) {
+                    this.handlers.onViewers(payload);
+                } else {
+                    this.handlers.onMalformedEvent?.("viewers");
                 }
                 break;
             }

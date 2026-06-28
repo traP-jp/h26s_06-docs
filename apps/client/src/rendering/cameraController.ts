@@ -76,19 +76,21 @@ export class CameraController {
                         child !== undefined && child.isLayoutActive
                 ),
         ];
-        const frame = calculateCameraFrame(
-            expandedNodes.map(expandedNode => ({
-                x: expandedNode.targetX,
-                y: expandedNode.targetY,
-                z: expandedNode.targetZ,
-            })),
+        const framePoints = expandedNodes.map(expandedNode => ({
+            x: expandedNode.targetX,
+            y: expandedNode.targetY,
+            z: expandedNode.targetZ,
+            radius: Math.max(10, cameraObstacleRadius(expandedNode) * 2.6),
+        }));
+        let frame = calculateCameraFrame(
+            framePoints,
             direction,
             this.camera.fov,
             this.camera.aspect,
             { x: node.targetX, y: node.targetY, z: node.targetZ }
         );
-        const target = new Vector3(frame.target.x, frame.target.y, frame.target.z);
-        const targetOffset = target
+        let target = new Vector3(frame.target.x, frame.target.y, frame.target.z);
+        let targetOffset = target
             .clone()
             .sub(new Vector3(node.targetX, node.targetY, node.targetZ));
         const basePosition = target.clone().addScaledVector(direction, frame.distance);
@@ -119,6 +121,26 @@ export class CameraController {
             })),
             obstacles
         );
+        const positionOffset = new Vector3(offset.x, offset.y, offset.z);
+        if (positionOffset.lengthSq() > 0.001) {
+            const shiftedDirection = direction
+                .clone()
+                .multiplyScalar(frame.distance)
+                .add(positionOffset)
+                .normalize();
+            frame = calculateCameraFrame(
+                framePoints,
+                shiftedDirection,
+                this.camera.fov,
+                this.camera.aspect,
+                { x: node.targetX, y: node.targetY, z: node.targetZ }
+            );
+            target = new Vector3(frame.target.x, frame.target.y, frame.target.z);
+            targetOffset = target
+                .clone()
+                .sub(new Vector3(node.targetX, node.targetY, node.targetZ));
+        }
+        this.expandCameraDistanceLimits(frame.distance);
 
         this.transition = {
             startedAt: performance.now(),
@@ -127,7 +149,7 @@ export class CameraController {
             direction,
             distance: frame.distance,
             targetOffset,
-            positionOffset: new Vector3(offset.x, offset.y, offset.z),
+            positionOffset,
             nodeId: id,
         };
     }
@@ -170,6 +192,14 @@ export class CameraController {
         this.camera.lookAt(this.controls.target);
         this.camera.updateMatrixWorld();
         this.controls.update();
+    }
+
+    private expandCameraDistanceLimits(distance: number) {
+        if (distance > this.controls.maxDistance) this.controls.maxDistance = distance;
+        if (distance * 1.2 <= this.camera.far) return;
+
+        this.camera.far = distance * 1.2;
+        this.camera.updateProjectionMatrix();
     }
 
     updateTransition(graph: ChannelGraph, now: number) {
