@@ -14,13 +14,15 @@ const (
 	recentMessageIDLimit = 100
 	maxSyncPayloadDeltas = 100
 
-	messageScoreAmount         = 1.0
-	messageScoreReferenceChars = 20
-	movementScoreAmount        = 0.025
-	ancestorScoreFactor        = 0.45
-	scoreDecayTimeScale        = 300.0
-	syncDeltaWeightScale       = 10.0
-	viewerScoreWeight          = 0.46
+  messageScoreAmount         = 1.0
+  messageScoreReferenceChars = 20
+  movementScoreAmount        = 0.025
+  ancestorScoreFactor        = 0.45
+  scoreDecayTimeScale        = 300.0
+  messageCountTimeScale      = 300.0
+  minMessageCount            = 0.01
+  syncDeltaWeightScale       = 10.0
+  viewerScoreWeight          = 0.46
 )
 
 type channel struct {
@@ -44,10 +46,16 @@ type userState struct {
 	LastUpdated       time.Time
 }
 
+type messageCount struct {
+	Count       float64
+	LastUpdated time.Time
+}
+
 type stateManager struct {
 	mu               sync.RWMutex
 	channels         map[string]*channel
 	users            map[string]*userState
+	messageCounts    map[string]map[string]messageCount
 	seenMessageIDs   map[string]struct{}
 	recentMessageIDs []string
 	initJSON         []byte
@@ -72,7 +80,7 @@ func newDemoStateManager() (*stateManager, error) {
 	channels := map[string]*channel{
 		grandRootID: {
 			ID:           grandRootID,
-			Name:         "Grand Root",
+			Name:         "traQ",
 			ParentID:     "",
 			IslandID:     -1,
 			Depth:        0,
@@ -119,7 +127,12 @@ func newDemoStateManager() (*stateManager, error) {
 	}
 
 	prepareChannelTimes(channels, now)
-	sm := &stateManager{channels: channels, users: map[string]*userState{}, seenMessageIDs: map[string]struct{}{}}
+	sm := &stateManager{
+		channels:       channels,
+		users:          map[string]*userState{},
+		messageCounts:  map[string]map[string]messageCount{},
+		seenMessageIDs: map[string]struct{}{},
+	}
 	if err := sm.rebuildInitJSONLocked(); err != nil {
 		return nil, err
 	}
@@ -131,7 +144,7 @@ func newStateManagerFromTraq(channels []traqChannel) (*stateManager, error) {
 	nodes := map[string]*channel{
 		grandRootID: {
 			ID:           grandRootID,
-			Name:         "Grand Root",
+			Name:         "traQ",
 			ParentID:     "",
 			IslandID:     -1,
 			Depth:        0,
@@ -178,7 +191,12 @@ func newStateManagerFromTraq(channels []traqChannel) (*stateManager, error) {
 	}
 
 	prepareChannelTimes(nodes, now)
-	sm := &stateManager{channels: nodes, users: map[string]*userState{}, seenMessageIDs: map[string]struct{}{}}
+	sm := &stateManager{
+		channels:       nodes,
+		users:          map[string]*userState{},
+		messageCounts:  map[string]map[string]messageCount{},
+		seenMessageIDs: map[string]struct{}{},
+	}
 	if err := sm.rebuildInitJSONLocked(); err != nil {
 		return nil, err
 	}
@@ -254,7 +272,9 @@ func (sm *stateManager) initPayloadBytes() []byte {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	sm.decayScoresLocked(time.Now())
+	now := time.Now()
+	sm.decayScoresLocked(now)
+	sm.decayMessageCountsLocked(now)
 	data, err := sm.marshalInitPayloadLocked()
 	if err != nil {
 		return append([]byte(nil), sm.initJSON...)
@@ -323,7 +343,7 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 			}
 			sm.rememberMessageIDLocked(trigger.MessageID)
 		}
-		score := messageScoreDelta(trigger)
+		score := sm.messageScoreDeltaLocked(trigger, time.Now())
 		sm.addScoreLocked(trigger.Ch, score)
 		trigger.ScoreDelta = score
 		return trigger, true
@@ -391,6 +411,59 @@ func messageScoreDelta(trigger triggerPayload) float64 {
 		math.Log1p(float64(messageScoreReferenceChars))
 }
 
+func (sm *stateManager) messageScoreDeltaLocked(trigger triggerPayload, now time.Time) float64 {
+	base := messageScoreDelta(trigger)
+	if trigger.Ch == "" || trigger.MessageUserID == "" {
+		return base
+	}
+	count := sm.decayedMessageCountLocked(trigger.Ch, trigger.MessageUserID, now)
+	sm.storeMessageCountLocked(trigger.Ch, trigger.MessageUserID, count+1, now)
+	return base / (1 + count)
+}
+
+func (sm *stateManager) decayedMessageCountLocked(channelID string, userID string, now time.Time) float64 {
+	if sm.messageCounts == nil {
+		return 0
+	}
+	channelCounts := sm.messageCounts[channelID]
+	if channelCounts == nil {
+		return 0
+	}
+	entry, ok := channelCounts[userID]
+	if !ok {
+		return 0
+	}
+	count := decayedMessageCount(entry, now)
+	if count < minMessageCount {
+		delete(channelCounts, userID)
+		if len(channelCounts) == 0 {
+			delete(sm.messageCounts, channelID)
+		}
+		return 0
+	}
+	return count
+}
+
+func (sm *stateManager) storeMessageCountLocked(channelID string, userID string, count float64, now time.Time) {
+	if sm.messageCounts == nil {
+		sm.messageCounts = map[string]map[string]messageCount{}
+	}
+	channelCounts := sm.messageCounts[channelID]
+	if channelCounts == nil {
+		channelCounts = map[string]messageCount{}
+		sm.messageCounts[channelID] = channelCounts
+	}
+	channelCounts[userID] = messageCount{Count: count, LastUpdated: now}
+}
+
+func decayedMessageCount(entry messageCount, now time.Time) float64 {
+	elapsed := now.Sub(entry.LastUpdated).Seconds()
+	if elapsed <= 0 {
+		return entry.Count
+	}
+	return entry.Count * math.Exp(-elapsed/messageCountTimeScale)
+}
+
 func (sm *stateManager) rememberMessageIDLocked(messageID string) {
 	sm.seenMessageIDs[messageID] = struct{}{}
 	sm.recentMessageIDs = append(sm.recentMessageIDs, messageID)
@@ -420,6 +493,7 @@ func (sm *stateManager) syncPayload() syncPayload {
 
 	now := time.Now()
 	sm.decayScoresLocked(now)
+	sm.decayMessageCountsLocked(now)
 
 	weighted := make([]weightedChannel, 0, len(sm.channels))
 	for _, ch := range sm.channels {
@@ -449,6 +523,25 @@ func (sm *stateManager) decayScoresLocked(now time.Time) {
 			ch.Score *= math.Exp(-decayElapsed / scoreDecayTimeScale)
 		}
 		ch.LastDecayTime = now
+	}
+}
+
+func (sm *stateManager) decayMessageCountsLocked(now time.Time) {
+	if sm.messageCounts == nil {
+		return
+	}
+	for channelID, channelCounts := range sm.messageCounts {
+		for userID, entry := range channelCounts {
+			count := decayedMessageCount(entry, now)
+			if count < minMessageCount {
+				delete(channelCounts, userID)
+				continue
+			}
+			channelCounts[userID] = messageCount{Count: count, LastUpdated: now}
+		}
+		if len(channelCounts) == 0 {
+			delete(sm.messageCounts, channelID)
+		}
 	}
 }
 

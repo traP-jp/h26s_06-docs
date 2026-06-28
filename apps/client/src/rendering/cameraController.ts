@@ -27,6 +27,10 @@ export class CameraController {
     private readonly projectedPoint = new Vector3();
     private readonly viewportOrigin = new Vector3();
     private readonly shiftedViewportOrigin = new Vector3();
+    private readonly cameraRight = new Vector3();
+    private readonly cameraUp = new Vector3();
+    private readonly cameraOffset = new Vector3();
+    private readonly cameraMovement = new Vector3();
 
     constructor(
         private readonly camera: PerspectiveCamera,
@@ -72,19 +76,21 @@ export class CameraController {
                         child !== undefined && child.isLayoutActive
                 ),
         ];
-        const frame = calculateCameraFrame(
-            expandedNodes.map(expandedNode => ({
-                x: expandedNode.targetX,
-                y: expandedNode.targetY,
-                z: expandedNode.targetZ,
-            })),
+        const framePoints = expandedNodes.map(expandedNode => ({
+            x: expandedNode.targetX,
+            y: expandedNode.targetY,
+            z: expandedNode.targetZ,
+            radius: Math.max(10, cameraObstacleRadius(expandedNode) * 2.6),
+        }));
+        let frame = calculateCameraFrame(
+            framePoints,
             direction,
             this.camera.fov,
             this.camera.aspect,
             { x: node.targetX, y: node.targetY, z: node.targetZ }
         );
-        const target = new Vector3(frame.target.x, frame.target.y, frame.target.z);
-        const targetOffset = target
+        let target = new Vector3(frame.target.x, frame.target.y, frame.target.z);
+        let targetOffset = target
             .clone()
             .sub(new Vector3(node.targetX, node.targetY, node.targetZ));
         const basePosition = target.clone().addScaledVector(direction, frame.distance);
@@ -115,6 +121,26 @@ export class CameraController {
             })),
             obstacles
         );
+        const positionOffset = new Vector3(offset.x, offset.y, offset.z);
+        if (positionOffset.lengthSq() > 0.001) {
+            const shiftedDirection = direction
+                .clone()
+                .multiplyScalar(frame.distance)
+                .add(positionOffset)
+                .normalize();
+            frame = calculateCameraFrame(
+                framePoints,
+                shiftedDirection,
+                this.camera.fov,
+                this.camera.aspect,
+                { x: node.targetX, y: node.targetY, z: node.targetZ }
+            );
+            target = new Vector3(frame.target.x, frame.target.y, frame.target.z);
+            targetOffset = target
+                .clone()
+                .sub(new Vector3(node.targetX, node.targetY, node.targetZ));
+        }
+        this.expandCameraDistanceLimits(frame.distance);
 
         this.transition = {
             startedAt: performance.now(),
@@ -123,13 +149,57 @@ export class CameraController {
             direction,
             distance: frame.distance,
             targetOffset,
-            positionOffset: new Vector3(offset.x, offset.y, offset.z),
+            positionOffset,
             nodeId: id,
         };
     }
 
     cancelTransition() {
         this.transition = undefined;
+    }
+
+    moveInView(deltaX: number, deltaY: number, viewportHeight: number) {
+        this.transition = undefined;
+        const distance = this.camera.position.distanceTo(this.controls.target);
+        const worldPerPixel =
+            (2 * Math.tan((this.camera.fov * Math.PI) / 360) * Math.max(1, distance)) /
+            Math.max(1, viewportHeight);
+        this.cameraRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion).normalize();
+        this.cameraUp.set(0, 1, 0).applyQuaternion(this.camera.quaternion).normalize();
+        this.cameraMovement
+            .copy(this.cameraRight)
+            .multiplyScalar(deltaX * worldPerPixel)
+            .addScaledVector(this.cameraUp, -deltaY * worldPerPixel);
+        this.camera.position.add(this.cameraMovement);
+        this.controls.target.add(this.cameraMovement);
+        this.camera.updateMatrixWorld();
+        this.controls.update();
+    }
+
+    zoomBy(multiplier: number) {
+        if (multiplier <= 0) return;
+        this.transition = undefined;
+        this.cameraOffset.copy(this.camera.position).sub(this.controls.target);
+        if (this.cameraOffset.lengthSq() < 0.001) this.cameraOffset.set(0, 0, 1);
+        const currentDistance = this.cameraOffset.length();
+        const nextDistance = Math.max(
+            this.controls.minDistance,
+            Math.min(this.controls.maxDistance, currentDistance * multiplier)
+        );
+        this.camera.position
+            .copy(this.controls.target)
+            .add(this.cameraOffset.setLength(nextDistance));
+        this.camera.lookAt(this.controls.target);
+        this.camera.updateMatrixWorld();
+        this.controls.update();
+    }
+
+    private expandCameraDistanceLimits(distance: number) {
+        if (distance > this.controls.maxDistance) this.controls.maxDistance = distance;
+        if (distance * 1.2 <= this.camera.far) return;
+
+        this.camera.far = distance * 1.2;
+        this.camera.updateProjectionMatrix();
     }
 
     updateTransition(graph: ChannelGraph, now: number) {

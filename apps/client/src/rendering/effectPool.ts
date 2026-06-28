@@ -16,6 +16,7 @@ import {
 
 import { audioManager } from "../audio/audioManager";
 import type { ChannelGraph, ChannelNode, VisualEvent } from "../core/channelGraph";
+import { setAnimatedNodePosition } from "./nodeWaver";
 
 interface TimedEffect {
     active: boolean;
@@ -51,10 +52,7 @@ const BEAM_TRAIL_PROGRESS = 0.24;
 
 function getNodePosition(node: ChannelNode | undefined, now: number): Vector3 {
     if (!node) return new Vector3();
-    const wx = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
-    const wy = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
-    const wz = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
-    return new Vector3(node.x + wx, node.y + wy, node.z + wz);
+    return setAnimatedNodePosition(new Vector3(), node, now);
 }
 
 export class EffectPool {

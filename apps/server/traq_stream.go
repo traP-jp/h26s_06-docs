@@ -25,6 +25,7 @@ type traqMessage struct {
 
 type messageInfo struct {
 	ChannelID string
+	UserID    string
 	IsBot     bool
 	Length    int
 }
@@ -227,6 +228,7 @@ func (s *server) parseTraqStreamEvent(ctx context.Context, accessToken string, p
 			Type:             "msg",
 			Ch:               info.ChannelID,
 			MessageID:        body.ID,
+			MessageUserID:    info.UserID,
 			MessageLength:    info.Length,
 			HasMessageLength: true,
 			Source:           "ws",
@@ -328,6 +330,7 @@ func (s *server) fetchMessageInfo(ctx context.Context, accessToken string, messa
 	}
 	info := messageInfo{
 		ChannelID: message.ChannelID,
+		UserID:    message.UserID,
 		Length:    len([]rune(message.Content)),
 	}
 

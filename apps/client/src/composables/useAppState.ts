@@ -27,6 +27,9 @@ export function useAppState() {
     const lastEvent = ref("初期データを待っています");
     const updatedAt = ref("");
     const renderError = ref<string>();
+    const viewers = ref<string[]>([]);
+    const viewersPending = ref(false);
+    const viewersUnavailable = ref(false);
     const rememberedChildByParent = ref<Record<string, string>>({});
 
     const selected = computed(() => {
@@ -69,6 +72,9 @@ export function useAppState() {
     function resetActivity() {
         graph.value = undefined;
         selectedId.value = undefined;
+        viewers.value = [];
+        viewersPending.value = false;
+        viewersUnavailable.value = false;
         rememberedChildByParent.value = {};
         eventCount.value = 0;
         lastEvent.value = "初期データを待っています";
@@ -96,6 +102,9 @@ export function useAppState() {
         lastEvent,
         updatedAt,
         renderError,
+        viewers,
+        viewersPending,
+        viewersUnavailable,
         selected,
         connectionLabel,
         recordTrigger,

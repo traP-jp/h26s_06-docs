@@ -80,12 +80,6 @@ button {
     flex-shrink: 0;
 }
 
-.topbar__meta {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-}
-
 .eyebrow {
     margin: 0 0 5px;
     color: #7187a4;
@@ -470,21 +464,12 @@ dd {
         gap: 12px;
     }
 
-    .topbar__meta {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
     h1 {
         font-size: 17px;
     }
 
     .topbar-logo {
         height: 38px;
-    }
-
-    .session-pill {
-        justify-content: space-between;
     }
 
     .metrics {
@@ -691,6 +676,31 @@ dd {
 .settingsToggle:focus-within {
     outline: 1px solid #75caff;
     outline-offset: 2px;
+}
+
+.settingsStatus {
+    display: grid;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid rgb(140 190 255 / 12%);
+}
+
+.settingsStatus .connection,
+.settingsStatus .session-pill {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.settingsStatus .connection {
+    min-width: 0;
+    border: 1px solid rgb(140 190 255 / 13%);
+    padding: 10px;
+    background: rgb(5 12 25 / 72%);
+}
+
+.settingsStatus .connection small {
+    max-width: 260px;
 }
 
 .volumeControl {

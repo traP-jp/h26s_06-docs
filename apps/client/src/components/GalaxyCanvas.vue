@@ -27,10 +27,17 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
 import { ACTIVE_RELATIVE_SCORE_THRESHOLD, type ChannelGraph } from "../core/channelGraph";
+import type {
+    CameraMoveDirection,
+    CameraRotationDirection,
+    CameraZoomDirection,
+} from "../core/keyboardController";
 import { NodeBuffer } from "../core/nodeBuffer";
 import { CameraController } from "../rendering/cameraController";
 import { EffectPool } from "../rendering/effectPool";
 import { HierarchyEdgeBuffer } from "../rendering/hierarchyEdgeBuffer";
+import { nodeFragmentShader, nodeVertexShader } from "../rendering/nodeShaders";
+import { nodeWaverX, nodeWaverY, nodeWaverZ } from "../rendering/nodeWaver";
 
 const props = defineProps<{
     graph: ChannelGraph;
@@ -50,6 +57,31 @@ const rootEdgeColor = "#7b8798";
 const rootEdgeVisualOpacity = 0.26;
 const idleAutoRotationDelay = 5000;
 const idleAutoRotationRadiansPerSecond = 0.012;
+const keyboardPanAcceleration = 920;
+const keyboardPanMaxSpeed = 520;
+const keyboardPanDamping = 7.5;
+const keyboardRotationAcceleration = 760;
+const keyboardRotationMaxSpeed = 430;
+const keyboardRotationDamping = 8;
+const keyboardZoomAcceleration = 3.2;
+const keyboardZoomMaxSpeed = 1.8;
+const keyboardZoomDamping = 6;
+const keyboardMotionEpsilon = 0.01;
+const shootingStarPoolSize = 40;
+const shootingStarMeanInterval = 3000;
+const shootingStarClusterChance = 0.18;
+const shootingStarClusterMax = 5;
+
+interface ShootingStar {
+    active: boolean;
+    startedAt: number;
+    duration: number;
+    start: Vector3;
+    direction: Vector3;
+    length: number;
+    travel: number;
+    brightness: number;
+}
 
 let renderer: WebGLRenderer | undefined;
 let scene: Scene | undefined;
@@ -59,6 +91,7 @@ let cameraController: CameraController | undefined;
 let composer: EffectComposer | undefined;
 let effects: EffectPool | undefined;
 let nodes: InstancedMesh<SphereGeometry, ShaderMaterial> | undefined;
+let shootingStars: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let hierarchyEdges: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let selectionPath: Line<BufferGeometry, LineBasicMaterial> | undefined;
 let frame = 0;
@@ -77,57 +110,31 @@ let hierarchyEdgeBaseColors = createEdgeBaseColors();
 const projectedNode = new Vector3();
 const hoverPointer = new Vector2();
 const instanceColor = new Color();
+const activeCameraMoveDirections = new Set<CameraMoveDirection>();
+const activeCameraZoomDirections = new Set<CameraZoomDirection>();
+const activeCameraRotationDirections = new Set<CameraRotationDirection>();
+const keyboardPanVelocity = new Vector2();
+const keyboardRotationVelocity = new Vector2();
+const keyboardPanInput = new Vector2();
+const keyboardRotationInput = new Vector2();
+let keyboardZoomVelocity = 0;
+let nextShootingStarAt = performance.now() + randomShootingStarInterval();
+const shootingStarPool: ShootingStar[] = Array.from({ length: shootingStarPoolSize }, () => ({
+    active: false,
+    startedAt: 0,
+    duration: 0,
+    start: new Vector3(),
+    direction: new Vector3(),
+    length: 0,
+    travel: 0,
+    brightness: 0,
+}));
+const shootingStarViewDirection = new Vector3();
+const shootingStarRight = new Vector3();
+const shootingStarUp = new Vector3();
+const shootingStarHead = new Vector3();
+const shootingStarTail = new Vector3();
 const NODE_PICK_RADIUS = 28;
-const nodeVertexShader = `
-varying vec3 vColor;
-varying vec3 vObjectPosition;
-varying vec3 vViewNormal;
-
-void main() {
-    vColor = instanceColor;
-    vObjectPosition = position;
-    vec4 modelViewPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
-    vViewNormal = normalize(normalMatrix * mat3(instanceMatrix) * normal);
-    gl_Position = projectionMatrix * modelViewPosition;
-}
-`;
-const nodeFragmentShader = `
-precision highp float;
-
-uniform float uTime;
-
-varying vec3 vColor;
-varying vec3 vObjectPosition;
-varying vec3 vViewNormal;
-
-float hash(vec3 p) {
-    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
-}
-
-void main() {
-    vec3 normal = normalize(vViewNormal);
-    float facing = abs(normal.z);
-
-    float outerGlow = pow(facing, 0.24) * 0.16;
-    float glow = pow(facing, 0.82);
-    float softHalo = pow(facing, 3.8) * 0.28;
-    float nucleus = smoothstep(0.988, 1.0, facing);
-
-    vec3 cell = floor(normalize(vObjectPosition) * 22.0);
-    float seed = hash(cell);
-    float shimmerWave = sin(uTime * (1.5 + seed * 2.8) + seed * 18.0);
-    float shimmer = smoothstep(0.78, 1.0, shimmerWave) * smoothstep(0.64, 1.0, seed) * pow(facing, 2.2);
-
-    float alpha = outerGlow + glow * 0.26 + softHalo + nucleus * 0.82 + shimmer * 0.14;
-    alpha *= smoothstep(0.08, 0.34, length(vObjectPosition));
-
-    if (alpha < 0.006) discard;
-
-    vec3 nucleusColor = vec3(0.96, 0.98, 1.0);
-    vec3 color = vColor * (0.3 + outerGlow * 0.68 + glow * 0.98 + softHalo * 0.48) + nucleusColor * (nucleus * 1.55 + shimmer * 0.58);
-    gl_FragColor = vec4(color, alpha);
-}
-`;
 
 function initialise() {
     const element = host.value;
@@ -163,6 +170,9 @@ function initialise() {
         controls.enablePan = true;
         cameraController = new CameraController(camera, controls);
 
+        resetShootingStars();
+        shootingStars = createShootingStars();
+        scene.add(shootingStars);
         nodes = createNodeMesh();
         scene.add(nodes);
         hierarchyEdges = createEdges();
@@ -234,6 +244,35 @@ function createNodeMesh() {
     return mesh;
 }
 
+function createShootingStars() {
+    const positions = new Float32Array(shootingStarPoolSize * 6);
+    const colors = new Float32Array(shootingStarPoolSize * 6);
+    const geometry = new BufferGeometry();
+    geometry.setAttribute(
+        "position",
+        new Float32BufferAttribute(positions, 3).setUsage(DynamicDrawUsage)
+    );
+    geometry.setAttribute(
+        "color",
+        new Float32BufferAttribute(colors, 3).setUsage(DynamicDrawUsage)
+    );
+    geometry.setDrawRange(0, 0);
+    const lines = new LineSegments(
+        geometry,
+        new LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.72,
+            blending: AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false,
+        })
+    );
+    lines.frustumCulled = false;
+    lines.renderOrder = -10;
+    return lines;
+}
+
 function createEdges() {
     const positions = new Float32Array(hierarchyEdgeBuffer.capacity * 6);
     const colors = new Float32Array(hierarchyEdgeBuffer.capacity * 6);
@@ -290,20 +329,12 @@ function updateEdges(now: number) {
             alphaScale *
             activityScale;
 
-        const wxParent = Math.sin(now * 0.0008 + parent.index * 1.2) * 1.5;
-        const wyParent = Math.cos(now * 0.0009 + parent.index * 0.8) * 1.5;
-        const wzParent = Math.sin(now * 0.0007 + parent.index * 1.5) * 1.5;
-
-        const wxNode = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
-        const wyNode = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
-        const wzNode = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
-
-        posArray[offset++] = parent.x + wxParent;
-        posArray[offset++] = parent.y + wyParent;
-        posArray[offset++] = parent.z + wzParent;
-        posArray[offset++] = node.x + wxNode;
-        posArray[offset++] = node.y + wyNode;
-        posArray[offset++] = node.z + wzNode;
+        posArray[offset++] = parent.x + nodeWaverX(now, parent.index);
+        posArray[offset++] = parent.y + nodeWaverY(now, parent.index);
+        posArray[offset++] = parent.z + nodeWaverZ(now, parent.index);
+        posArray[offset++] = node.x + nodeWaverX(now, node.index);
+        posArray[offset++] = node.y + nodeWaverY(now, node.index);
+        posArray[offset++] = node.z + nodeWaverZ(now, node.index);
 
         const baseOffset = nodeIndex * 6;
         const colorOffset = edgeIndex * 6;
@@ -375,11 +406,13 @@ function draw(now: number) {
     props.graph.update(delta);
     for (const event of props.graph.takeVisualEvents()) effects?.play(event, now);
     effects?.update(now);
+    updateShootingStars(now);
     nodeBuffer.update(props.graph.nodes, now, props.selectedId, props.activeOnly);
     (nodes.instanceMatrix.array as Float32Array).set(nodeBuffer.matrixData);
     nodes.instanceMatrix.needsUpdate = true;
     updateEdges(now);
     updateSelectionPathPositions(now);
+    updateKeyboardCameraMotion(delta);
     cameraController?.updateTransition(props.graph, now);
     updateIdleAutoRotation(now, delta);
     const timeUniform = nodes.material.uniforms.uTime;
@@ -388,6 +421,109 @@ function draw(now: number) {
     constrainRotationCenterToViewport();
     updateHoverCursor();
     composer.render();
+}
+
+function updateShootingStars(now: number) {
+    if (!shootingStars || !camera) return;
+    while (now >= nextShootingStarAt) {
+        const count =
+            Math.random() < shootingStarClusterChance
+                ? 2 + Math.floor(Math.random() * (shootingStarClusterMax - 1))
+                : 1;
+        for (let index = 0; index < count; index += 1) {
+            spawnShootingStar(now, index, count);
+        }
+        nextShootingStarAt += randomShootingStarInterval();
+    }
+
+    const positionAttribute = shootingStars.geometry.getAttribute(
+        "position"
+    ) as Float32BufferAttribute;
+    const colorAttribute = shootingStars.geometry.getAttribute("color") as Float32BufferAttribute;
+    const posArray = positionAttribute.array as Float32Array;
+    const colArray = colorAttribute.array as Float32Array;
+    let offset = 0;
+
+    for (const star of shootingStarPool) {
+        if (!star.active) continue;
+        const progress = (now - star.startedAt) / star.duration;
+        if (progress < 0) continue;
+        if (progress >= 1) {
+            star.active = false;
+            continue;
+        }
+
+        const fade = Math.sin(progress * Math.PI) ** 1.35 * star.brightness;
+        shootingStarHead.copy(star.start).addScaledVector(star.direction, star.travel * progress);
+        shootingStarTail.copy(shootingStarHead).addScaledVector(star.direction, -star.length);
+
+        posArray[offset] = shootingStarTail.x;
+        posArray[offset + 1] = shootingStarTail.y;
+        posArray[offset + 2] = shootingStarTail.z;
+        posArray[offset + 3] = shootingStarHead.x;
+        posArray[offset + 4] = shootingStarHead.y;
+        posArray[offset + 5] = shootingStarHead.z;
+
+        colArray[offset] = 0.2 * fade;
+        colArray[offset + 1] = 0.34 * fade;
+        colArray[offset + 2] = 0.52 * fade;
+        colArray[offset + 3] = 0.78 * fade;
+        colArray[offset + 4] = 0.92 * fade;
+        colArray[offset + 5] = 1.0 * fade;
+        offset += 6;
+    }
+
+    shootingStars.geometry.setDrawRange(0, (offset / 3) | 0);
+    positionAttribute.needsUpdate = true;
+    colorAttribute.needsUpdate = true;
+}
+
+function spawnShootingStar(now: number, clusterIndex: number, clusterCount: number) {
+    if (!camera) return;
+    const star = shootingStarPool.find(item => !item.active) ?? shootingStarPool[0];
+    if (!star) return;
+    const depthBase = controls ? camera.position.distanceTo(controls.target) : 800;
+    const depth = Math.min(camera.far * 0.58, Math.max(720, depthBase + 620));
+    const viewportHeight = 2 * Math.tan((camera.fov * Math.PI) / 360) * depth;
+    const viewportWidth = viewportHeight * camera.aspect;
+    const clusterSpread = clusterCount <= 1 ? 0 : viewportHeight * 0.045;
+
+    camera.getWorldDirection(shootingStarViewDirection).normalize();
+    shootingStarRight.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+    shootingStarUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+
+    const clusterOffset = (clusterIndex - (clusterCount - 1) / 2) * clusterSpread;
+    const x = (Math.random() * 1.35 - 0.68) * viewportWidth + clusterOffset * 0.35;
+    const y = (Math.random() * 1.24 - 0.62) * viewportHeight + clusterOffset;
+    const screenDirectionX = 0.72 + Math.random() * 0.28;
+    const screenDirectionY = -(0.3 + Math.random() * 0.28);
+    const direction = shootingStarRight
+        .clone()
+        .multiplyScalar(screenDirectionX)
+        .addScaledVector(shootingStarUp, screenDirectionY)
+        .normalize();
+
+    star.active = true;
+    star.startedAt = now + clusterIndex * (45 + Math.random() * 65);
+    star.duration = 680 + Math.random() * 420;
+    star.length = viewportHeight * (0.035 + Math.random() * 0.045);
+    star.travel = viewportHeight * (0.22 + Math.random() * 0.2);
+    star.brightness = 0.54 + Math.random() * 0.46;
+    star.direction.copy(direction);
+    star.start
+        .copy(camera.position)
+        .addScaledVector(shootingStarViewDirection, depth)
+        .addScaledVector(shootingStarRight, x)
+        .addScaledVector(shootingStarUp, y);
+}
+
+function resetShootingStars() {
+    for (const star of shootingStarPool) star.active = false;
+    nextShootingStarAt = performance.now() + randomShootingStarInterval();
+}
+
+function randomShootingStarInterval() {
+    return -Math.log(Math.max(0.001, Math.random())) * shootingStarMeanInterval;
 }
 
 function updateIdleAutoRotation(now: number, delta: number) {
@@ -411,13 +547,9 @@ function updateSelectionPathPositions(now: number) {
     let offset = 0;
 
     for (const node of path) {
-        const wxNode = Math.sin(now * 0.0008 + node.index * 1.2) * 1.5;
-        const wyNode = Math.cos(now * 0.0009 + node.index * 0.8) * 1.5;
-        const wzNode = Math.sin(now * 0.0007 + node.index * 1.5) * 1.5;
-
-        posArray[offset++] = node.x + wxNode;
-        posArray[offset++] = node.y + wyNode;
-        posArray[offset++] = node.z + wzNode;
+        posArray[offset++] = node.x + nodeWaverX(now, node.index);
+        posArray[offset++] = node.y + nodeWaverY(now, node.index);
+        posArray[offset++] = node.z + nodeWaverZ(now, node.index);
     }
     positionAttribute.needsUpdate = true;
 }
@@ -437,6 +569,174 @@ function noteCameraInteraction() {
     lastCameraInteractionAt = performance.now();
 }
 
+function setCameraMoveActive(direction: CameraMoveDirection, active: boolean) {
+    setActiveDirection(activeCameraMoveDirections, direction, active);
+}
+
+function setCameraZoomActive(direction: CameraZoomDirection, active: boolean) {
+    setActiveDirection(activeCameraZoomDirections, direction, active);
+}
+
+function setCameraRotationActive(direction: CameraRotationDirection, active: boolean) {
+    setActiveDirection(activeCameraRotationDirections, direction, active);
+}
+
+function releaseCameraControls() {
+    activeCameraMoveDirections.clear();
+    activeCameraZoomDirections.clear();
+    activeCameraRotationDirections.clear();
+    resetKeyboardCameraMotion();
+}
+
+function setActiveDirection<T>(directions: Set<T>, direction: T, active: boolean) {
+    if (active) directions.add(direction);
+    else directions.delete(direction);
+}
+
+function updateKeyboardCameraMotion(delta: number) {
+    const element = renderer?.domElement;
+    if (!element || !cameraController) return;
+
+    const panInput = cameraMoveInput();
+    const rotationInput = cameraRotationInput();
+    const zoomInput = cameraZoomInput();
+    const hasInput = panInput.lengthSq() > 0 || rotationInput.lengthSq() > 0 || zoomInput !== 0;
+
+    if (!hasInput && !hasKeyboardCameraMotion()) return;
+    if (hasInput) cameraController.cancelTransition();
+
+    keyboardPanVelocity.set(
+        updateKeyboardVelocity(
+            keyboardPanVelocity.x,
+            panInput.x,
+            keyboardPanAcceleration,
+            keyboardPanMaxSpeed,
+            keyboardPanDamping,
+            delta
+        ),
+        updateKeyboardVelocity(
+            keyboardPanVelocity.y,
+            panInput.y,
+            keyboardPanAcceleration,
+            keyboardPanMaxSpeed,
+            keyboardPanDamping,
+            delta
+        )
+    );
+    keyboardRotationVelocity.set(
+        updateKeyboardVelocity(
+            keyboardRotationVelocity.x,
+            rotationInput.x,
+            keyboardRotationAcceleration,
+            keyboardRotationMaxSpeed,
+            keyboardRotationDamping,
+            delta
+        ),
+        updateKeyboardVelocity(
+            keyboardRotationVelocity.y,
+            rotationInput.y,
+            keyboardRotationAcceleration,
+            keyboardRotationMaxSpeed,
+            keyboardRotationDamping,
+            delta
+        )
+    );
+    keyboardZoomVelocity = updateKeyboardVelocity(
+        keyboardZoomVelocity,
+        zoomInput,
+        keyboardZoomAcceleration,
+        keyboardZoomMaxSpeed,
+        keyboardZoomDamping,
+        delta
+    );
+
+    if (!hasKeyboardCameraMotion()) return;
+
+    noteCameraInteraction();
+    if (keyboardPanVelocity.lengthSq() > 0) {
+        cameraController.moveInView(
+            keyboardPanVelocity.x * delta,
+            keyboardPanVelocity.y * delta,
+            element.clientHeight
+        );
+    }
+    if (Math.abs(keyboardZoomVelocity) > 0) {
+        cameraController.zoomBy(Math.exp(-keyboardZoomVelocity * delta));
+    }
+    if (keyboardRotationVelocity.lengthSq() > 0) {
+        rotateAroundSelectedNode(
+            keyboardRotationVelocity.x * delta,
+            keyboardRotationVelocity.y * delta
+        );
+    }
+}
+
+function cameraMoveInput() {
+    keyboardPanInput.set(
+        directionAxis(activeCameraMoveDirections, "left", "right"),
+        directionAxis(activeCameraMoveDirections, "up", "down")
+    );
+    return normalizeKeyboardInput(keyboardPanInput);
+}
+
+function cameraRotationInput() {
+    keyboardRotationInput.set(
+        directionAxis(activeCameraRotationDirections, "left", "right"),
+        directionAxis(activeCameraRotationDirections, "up", "down")
+    );
+    return normalizeKeyboardInput(keyboardRotationInput);
+}
+
+function cameraZoomInput() {
+    return (
+        Number(activeCameraZoomDirections.has("in")) - Number(activeCameraZoomDirections.has("out"))
+    );
+}
+
+function directionAxis<T>(directions: Set<T>, negative: T, positive: T) {
+    return Number(directions.has(positive)) - Number(directions.has(negative));
+}
+
+function normalizeKeyboardInput(input: Vector2) {
+    const length = input.length();
+    if (length > 1) input.multiplyScalar(1 / length);
+    return input;
+}
+
+function updateKeyboardVelocity(
+    current: number,
+    input: number,
+    acceleration: number,
+    maxSpeed: number,
+    damping: number,
+    delta: number
+) {
+    if (input !== 0) {
+        return clamp(current + input * acceleration * delta, -maxSpeed, maxSpeed);
+    }
+
+    const next = current * Math.exp(-damping * delta);
+    return Math.abs(next) < keyboardMotionEpsilon ? 0 : next;
+}
+
+function hasKeyboardCameraMotion() {
+    return (
+        keyboardPanVelocity.lengthSq() > keyboardMotionEpsilon ** 2 ||
+        keyboardRotationVelocity.lengthSq() > keyboardMotionEpsilon ** 2 ||
+        Math.abs(keyboardZoomVelocity) > keyboardMotionEpsilon
+    );
+}
+
+function resetKeyboardCameraMotion() {
+    keyboardPanVelocity.set(0, 0);
+    keyboardRotationVelocity.set(0, 0);
+    keyboardZoomVelocity = 0;
+}
+
+function clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
+}
+
 function onPointerDown(event: PointerEvent) {
     if (props.focusId) cameraController?.cancelTransition();
     pointerDown.set(event.clientX, event.clientY);
@@ -454,6 +754,7 @@ function centerInitialCamera() {
 }
 
 function updateCameraTarget(id: string | undefined) {
+    resetKeyboardCameraMotion();
     cameraController?.focus(props.graph, id);
 }
 
@@ -614,6 +915,7 @@ function onContextLost(event: Event) {
 
 function resetFrameClock() {
     lastFrame = performance.now();
+    nextShootingStarAt = lastFrame + randomShootingStarInterval();
 }
 
 function dispose() {
@@ -631,6 +933,7 @@ function dispose() {
     controls?.dispose();
     effects?.dispose();
     effects = undefined;
+    shootingStars = undefined;
     hierarchyEdges = undefined;
     selectionPath = undefined;
     cameraController = undefined;
@@ -685,6 +988,13 @@ watch(
 
 onMounted(initialise);
 onBeforeUnmount(dispose);
+
+defineExpose({
+    setCameraMoveActive,
+    setCameraZoomActive,
+    setCameraRotationActive,
+    releaseCameraControls,
+});
 </script>
 
 <template>

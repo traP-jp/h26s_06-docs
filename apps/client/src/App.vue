@@ -12,14 +12,26 @@ import { useAppState } from "./composables/useAppState";
 import { useAudioSettings } from "./composables/useAudioSettings";
 import { useBackgroundSync } from "./composables/useBackgroundSync";
 import { ChannelGraph } from "./core/channelGraph";
-import { KeyboardController } from "./core/keyboardController";
+import {
+    type CameraMoveDirection,
+    type CameraRotationDirection,
+    type CameraZoomDirection,
+    KeyboardController,
+} from "./core/keyboardController";
 import { beginLogin, fetchCurrentUser } from "./services/auth";
 import { calculateChannelLayout } from "./services/channelLayout";
+import { ChannelStatus } from "./services/channelStatus";
 import { EventStream } from "./services/eventStream";
 import { KeyboardManager } from "./services/keyboardManager";
-import type { AuthUser } from "./types/api";
+import type { AuthUser, ViewersPayload } from "./types/api";
 
 type AuthState = "checking" | "authenticated" | "error" | "forbidden";
+interface GalaxyCanvasControls {
+    setCameraMoveActive: (direction: CameraMoveDirection, active: boolean) => void;
+    setCameraZoomActive: (direction: CameraZoomDirection, active: boolean) => void;
+    setCameraRotationActive: (direction: CameraRotationDirection, active: boolean) => void;
+    releaseCameraControls: () => void;
+}
 
 const isDemoMode = new URLSearchParams(window.location.search).get("demo") === "1";
 const SELECTED_LAYOUT_DEBOUNCE_MS = 120;
@@ -41,6 +53,9 @@ const {
     lastEvent,
     updatedAt,
     renderError,
+    viewers,
+    viewersPending,
+    viewersUnavailable,
     selected,
     connectionLabel,
     recordTrigger,
@@ -57,6 +72,37 @@ const focusId = ref<string | undefined>();
 const focusRevision = ref(0);
 const settingsOpen = ref(false);
 const detailsOpen = ref(false);
+let pendingStatusChannelId: string | undefined;
+let bufferedViewers: ViewersPayload | undefined;
+
+function applyViewers(payload: ViewersPayload): void {
+    viewers.value = payload.viewers;
+    viewersPending.value = false;
+    viewersUnavailable.value = false;
+}
+
+const channelStatus = isDemoMode
+    ? undefined
+    : new ChannelStatus({
+          onSending(channelId) {
+              pendingStatusChannelId = channelId;
+              bufferedViewers = undefined;
+          },
+          onApplied(channelId) {
+              if (pendingStatusChannelId === channelId) pendingStatusChannelId = undefined;
+              if (channelId === (selectedId.value ?? "") && bufferedViewers) {
+                  applyViewers(bufferedViewers);
+                  bufferedViewers = undefined;
+              }
+          },
+          onError(channelId) {
+              if (pendingStatusChannelId === channelId) pendingStatusChannelId = undefined;
+              if (channelId !== (selectedId.value ?? "")) return;
+              viewersPending.value = false;
+              viewersUnavailable.value = true;
+          },
+      });
+const galaxyCanvas = ref<GalaxyCanvasControls>();
 
 const showLoading = computed(
     () => authState.value !== "error" && authState.value !== "forbidden" && !graph.value
@@ -91,6 +137,18 @@ const keyboardController = new KeyboardController({
     onMuteToggle: toggleMuted,
     onSettingsOpen: openSettings,
     onSettingsClose: closeSettings,
+    onCameraMoveChange: (direction, active) => {
+        galaxyCanvas.value?.setCameraMoveActive(direction, active);
+    },
+    onCameraZoomChange: (direction, active) => {
+        galaxyCanvas.value?.setCameraZoomActive(direction, active);
+    },
+    onCameraRotateChange: (direction, active) => {
+        galaxyCanvas.value?.setCameraRotationActive(direction, active);
+    },
+    onCameraControlsRelease: () => {
+        galaxyCanvas.value?.releaseCameraControls();
+    },
 });
 const keyboardManager = new KeyboardManager(keyboardController);
 
@@ -260,6 +318,15 @@ function connectStream() {
             }
         },
 
+        onViewers(payload) {
+            if (!selectedId.value) return;
+            if (pendingStatusChannelId !== undefined) {
+                if (pendingStatusChannelId === selectedId.value) bufferedViewers = payload;
+                return;
+            }
+            applyViewers(payload);
+        },
+
         onMalformedEvent(eventName) {
             status.value = `${eventName} イベントを解釈できませんでした`;
         },
@@ -290,6 +357,11 @@ onMounted(() => {
 
 watch(selectedId, (newId, oldId) => {
     detailsOpen.value = Boolean(newId);
+    viewers.value = [];
+    bufferedViewers = undefined;
+    viewersPending.value = Boolean(newId) && !isDemoMode;
+    viewersUnavailable.value = isDemoMode;
+    channelStatus?.setChannel(newId);
 
     if (!graph.value) {
         focusId.value = newId;
@@ -312,6 +384,7 @@ onBeforeUnmount(() => {
     keyboardManager.stop();
     mounted = false;
     authGeneration += 1;
+    channelStatus?.setChannel();
     clearSelectedLayoutTimer();
     stopStream(false);
 });
@@ -325,10 +398,16 @@ onBeforeUnmount(() => {
         <SettingsDrawer
             v-if="authState === 'authenticated'"
             v-model="settingsOpen"
+            :connection="connection"
+            :connection-label="connectionLabel"
+            :status="status"
+            :is-demo-mode="isDemoMode"
+            :current-user="currentUser"
         />
 
         <GalaxyCanvas
             v-if="graph"
+            ref="galaxyCanvas"
             :graph="graph"
             :selected-id="selectedId"
             :focus-id="focusId"
@@ -373,14 +452,7 @@ onBeforeUnmount(() => {
             <button @click="reloadPage">再読み込み</button>
         </div>
 
-        <AppTopBar
-            :auth-state="authState"
-            :connection="connection"
-            :connection-label="connectionLabel"
-            :status="status"
-            :is-demo-mode="isDemoMode"
-            :current-user="currentUser"
-        />
+        <AppTopBar />
 
         <AppMetrics
             v-if="authState === 'authenticated'"
@@ -398,6 +470,8 @@ onBeforeUnmount(() => {
         <ChannelDetails
             v-if="selected && detailsOpen"
             :selected="selected"
+            :viewer-count="viewersUnavailable ? undefined : viewers.length"
+            :viewers-pending="viewersPending"
             @close="detailsOpen = false"
         />
 

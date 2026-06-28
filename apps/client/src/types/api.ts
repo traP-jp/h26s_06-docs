@@ -19,6 +19,10 @@ export interface SyncPayload {
     deltas: Record<string, number>;
 }
 
+export interface ViewersPayload {
+    viewers: string[];
+}
+
 export type ConnectionState = "connecting" | "open" | "closed";
 
 export interface AuthUser {

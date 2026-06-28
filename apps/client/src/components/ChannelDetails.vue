@@ -3,6 +3,8 @@ import type { SelectedChannel } from "../composables/useAppState";
 
 defineProps<{
     selected: SelectedChannel;
+    viewerCount?: number;
+    viewersPending: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -35,8 +37,8 @@ const emit = defineEmits<{
                 <dd>{{ (selected.relativeScore * 100).toFixed(0) }}</dd>
             </div>
             <div>
-                <dt>DEPTH</dt>
-                <dd>{{ selected.depth }}</dd>
+                <dt>VIEWERS</dt>
+                <dd>{{ viewersPending ? "…" : (viewerCount ?? "—") }}</dd>
             </div>
             <div>
                 <dt>CHILDREN</dt>
