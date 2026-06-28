@@ -317,6 +317,7 @@ function createShootingStars() {
         })
     );
     lines.frustumCulled = false;
+    lines.renderOrder = -10;
     return lines;
 }
 
