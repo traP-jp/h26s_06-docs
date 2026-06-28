@@ -12,10 +12,11 @@ import { useAppState } from "./composables/useAppState";
 import { useAudioSettings } from "./composables/useAudioSettings";
 import { useBackgroundSync } from "./composables/useBackgroundSync";
 import { ChannelGraph } from "./core/channelGraph";
+import { KeyboardController } from "./core/keyboardController";
 import { beginLogin, fetchCurrentUser } from "./services/auth";
 import { calculateChannelLayout } from "./services/channelLayout";
 import { EventStream } from "./services/eventStream";
-import { useKeyboardManager } from "./services/keyboardManager";
+import { KeyboardManager } from "./services/keyboardManager";
 import type { AuthUser } from "./types/api";
 
 type AuthState = "checking" | "authenticated" | "error" | "forbidden";
@@ -77,13 +78,18 @@ function closeSettings(): void {
     settingsOpen.value = false;
 }
 
-useKeyboardManager({
-    selected,
-    selectedId,
+const keyboardController = new KeyboardController({
+    getSelected: () => selected.value,
+    getSelectedId: () => selectedId.value,
+    setSelectedId: id => {
+        selectedId.value = id;
+    },
+    isSettingsOpen: () => settingsOpen.value,
     onMuteToggle: toggleMuted,
     onSettingsOpen: openSettings,
     onSettingsClose: closeSettings,
 });
+const keyboardManager = new KeyboardManager(keyboardController);
 
 function scheduleLayout(targetGraph: ChannelGraph): void {
     const generation = ++layoutGeneration;
@@ -239,6 +245,7 @@ function connectStream() {
 
 onMounted(() => {
     mounted = true;
+    keyboardManager.start();
 
     if (isDemoMode) {
         connectStream();
@@ -281,6 +288,7 @@ watch(selectedId, (newId, oldId) => {
 });
 
 onBeforeUnmount(() => {
+    keyboardManager.stop();
     mounted = false;
     authGeneration += 1;
     stopStream(false);
