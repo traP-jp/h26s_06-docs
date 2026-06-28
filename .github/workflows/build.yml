@@ -108,17 +108,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Write image references
+      - name: Push image refs to deploy branch
         run: |
           REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git fetch origin deploy; then
+            git checkout deploy
+          else
+            git checkout --orphan deploy
+            git rm -rf . 2>/dev/null || true
+          fi
+
           echo "ghcr.io/${REPO}/server@${{ needs.server.outputs.digest }}" > server.image.txt
           echo "ghcr.io/${REPO}/client@${{ needs.client.outputs.digest }}" > client.image.txt
 
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add server.image.txt client.image.txt
-          git commit -m "ci: update image references [skip ci]"
-          git push
+          git diff --cached --quiet || git commit -m "ci: update image references [skip ci]"
+          git push origin deploy
