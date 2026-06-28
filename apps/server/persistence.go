@@ -81,17 +81,16 @@ func openMariaDBStore(ctx context.Context, cfg mariaDBConfig) (*mariaDBStore, er
 }
 
 func (cfg mariaDBConfig) dsn() string {
-	mysqlCfg := mysqlconfig.Config{
-		User:      cfg.user,
-		Passwd:    cfg.password,
-		Net:       "tcp",
-		Addr:      net.JoinHostPort(cfg.hostname, cfg.port),
-		DBName:    cfg.database,
-		ParseTime: true,
-		Loc:       time.UTC,
-		Params: map[string]string{
-			"charset": "utf8mb4",
-		},
+	mysqlCfg := mysqlconfig.NewConfig()
+	mysqlCfg.User = cfg.user
+	mysqlCfg.Passwd = cfg.password
+	mysqlCfg.Net = "tcp"
+	mysqlCfg.Addr = net.JoinHostPort(cfg.hostname, cfg.port)
+	mysqlCfg.DBName = cfg.database
+	mysqlCfg.ParseTime = true
+	mysqlCfg.Loc = time.UTC
+	mysqlCfg.Params = map[string]string{
+		"charset": "utf8mb4",
 	}
 	return mysqlCfg.FormatDSN()
 }
