@@ -883,8 +883,7 @@ dd {
     width: 100%;
     min-height: 42px;
     border: 1px solid rgb(140 190 255 / 16%);
-    background:
-        linear-gradient(135deg, rgb(117 202 255 / 10%), transparent 44%), rgb(5 12 25 / 72%);
+    background: rgb(97 152 214 / 10%);
     color: #adcae6;
     cursor: pointer;
     font-size: 11px;
@@ -895,8 +894,7 @@ dd {
 .shortcutsButton:hover {
     border-color: rgb(105 215 255 / 36%);
     color: #d9edff;
-    background:
-        linear-gradient(135deg, rgb(117 202 255 / 16%), transparent 44%), rgb(68 150 210 / 12%);
+    background: rgb(68 150 210 / 14%);
 }
 
 .shortcutOverlay {
@@ -906,10 +904,7 @@ dd {
     display: grid;
     place-items: center;
     padding: 24px;
-    background:
-        radial-gradient(circle at 22% 18%, rgb(117 202 255 / 13%), transparent 28%),
-        radial-gradient(circle at 82% 70%, rgb(236 63 165 / 10%), transparent 30%),
-        rgb(0 3 10 / 78%);
+    background: rgb(0 3 10 / 78%);
     backdrop-filter: blur(10px);
 }
 
@@ -920,12 +915,11 @@ dd {
     overflow: auto;
     box-sizing: border-box;
     border: 1px solid rgb(140 190 255 / 18%);
-    background: linear-gradient(180deg, rgb(12 26 48 / 96%), rgb(3 8 18 / 97%)), rgb(3 8 18);
+    background: rgb(5 12 25 / 96%);
     color: #eaf3ff;
     box-shadow:
         0 0 0 1px rgb(255 255 255 / 3%) inset,
-        0 28px 90px rgb(0 0 0 / 58%),
-        0 0 54px rgb(117 202 255 / 10%);
+        0 28px 90px rgb(0 0 0 / 58%);
 }
 
 .shortcutHeader {
