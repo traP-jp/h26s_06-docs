@@ -16,6 +16,24 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+const (
+	sessionCookieName = "traq_session"
+)
+
+type authSession struct {
+	Token      tokenResponse
+	ExpiresAt  time.Time
+	TraqUserID string
+}
+
+type tokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	Scope        string `json:"scope,omitempty"`
+}
+
 type traqMe struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -238,25 +256,9 @@ func (s *server) cleanupExpiredAuth(now time.Time) {
 }
 
 func (s *server) fetchTraqMe(ctx context.Context, accessToken string) (traqMe, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.traqBaseURL+"/api/v3/users/me", nil)
-	if err != nil {
-		return traqMe{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return traqMe{}, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return traqMe{}, fmt.Errorf("users/me returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
 	var me traqMe
-	if err := json.Unmarshal(body, &me); err != nil {
-		return traqMe{}, err
+	if _, err := s.traqGetJSON(ctx, accessToken, "/api/v3/users/me", &me); err != nil {
+		return traqMe{}, fmt.Errorf("users/me: %w", err)
 	}
 	if me.ID == "" && me.Name == "" {
 		return traqMe{}, errors.New("users/me did not return id or name")

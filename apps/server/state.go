@@ -5,10 +5,15 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"sync"
 	"time"
 )
 
 const (
+	grandRootID          = "grand_root"
+	recentMessageIDLimit = 100
+	maxSyncPayloadDeltas = 100
+
 	messageScoreAmount   = 1.0
 	movementScoreAmount  = 0.25
 	ancestorScoreFactor  = 0.45
@@ -16,6 +21,50 @@ const (
 	syncDeltaWeightScale = 10.0
 	viewerScoreWeight    = 0.46
 )
+
+type channel struct {
+	ID            string
+	Name          string
+	ParentID      string
+	Children      []string
+	IslandID      int
+	Depth         int
+	Score         float64
+	LastSyncScore float64
+	LastSyncTime  time.Time
+	LastDecayTime time.Time
+	LastViewTime  time.Time
+}
+
+type userState struct {
+	UserID            string
+	CurrentChannel    string
+	LastViewedChannel string
+	LastUpdated       time.Time
+}
+
+type stateManager struct {
+	mu               sync.RWMutex
+	channels         map[string]*channel
+	users            map[string]*userState
+	seenMessageIDs   map[string]struct{}
+	recentMessageIDs []string
+	initJSON         []byte
+}
+
+type initPayload struct {
+	Channels map[string]initChannel `json:"channels"`
+}
+
+type initChannel struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	ParentID string   `json:"parentId"`
+	Children []string `json:"children"`
+	IslandID int      `json:"islandId"`
+	Depth    int      `json:"depth"`
+	Score    float64  `json:"score"`
+}
 
 func newDemoStateManager() (*stateManager, error) {
 	now := time.Now()

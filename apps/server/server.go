@@ -9,6 +9,8 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 )
 
+const authCleanupInterval = 10 * time.Minute
+
 func newServer(cfg config) (*server, error) {
 	demoState, err := newDemoStateManager()
 	if err != nil {

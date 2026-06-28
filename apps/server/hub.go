@@ -2,6 +2,8 @@ package main
 
 import "sync"
 
+const clientEventQueueSize = 64
+
 type eventHub struct {
 	mu      sync.RWMutex
 	closed  bool
