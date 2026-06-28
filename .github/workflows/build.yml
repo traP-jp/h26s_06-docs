@@ -22,6 +22,8 @@ jobs:
   server:
     name: Build server image
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - name: Checkout
@@ -46,6 +48,7 @@ jobs:
           tags: type=raw,value=latest
 
       - name: Build and push server image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: apps/server
@@ -58,6 +61,8 @@ jobs:
   client:
     name: Build client image
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - name: Checkout
@@ -82,6 +87,7 @@ jobs:
           tags: type=raw,value=latest
 
       - name: Build and push client image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: apps/client
@@ -90,3 +96,29 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  update-image-refs:
+    name: Update image references
+    runs-on: ubuntu-latest
+    needs: [server, client]
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write image references
+        run: |
+          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "ghcr.io/${REPO}/server@${{ needs.server.outputs.digest }}" > server.image.txt
+          echo "ghcr.io/${REPO}/client@${{ needs.client.outputs.digest }}" > client.image.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add server.image.txt client.image.txt
+          git commit -m "ci: update image references [skip ci]"
+          git push
