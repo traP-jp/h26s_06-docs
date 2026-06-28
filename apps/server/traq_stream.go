@@ -20,6 +20,13 @@ const userBotCacheLimit = 1500
 type traqMessage struct {
 	ChannelID string `json:"channelId"`
 	UserID    string `json:"userId"`
+	Content   string `json:"content"`
+}
+
+type messageInfo struct {
+	ChannelID string
+	IsBot     bool
+	Length    int
 }
 
 type traqUser struct {
@@ -156,23 +163,25 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 			return nil, nil
 		}
 		traqLogWS("MESSAGE_CREATED messageID=%s", body.ID)
-		channelID, isBot, err := s.fetchMessageInfo(ctx, s.cfg.traqBotAccessToken, body.ID)
-		if err != nil || isBot || channelID == "" {
-			if err == nil && isBot {
-				traqLogWarn("MESSAGE_CREATED skipped: bot messageID=%s channelID=%s", body.ID, channelID)
+		info, err := s.fetchMessageInfo(ctx, s.cfg.traqBotAccessToken, body.ID)
+		if err != nil || info.IsBot || info.ChannelID == "" {
+			if err == nil && info.IsBot {
+				traqLogWarn("MESSAGE_CREATED skipped: bot messageID=%s channelID=%s", body.ID, info.ChannelID)
 			}
-			if err == nil && !isBot && channelID == "" {
+			if err == nil && !info.IsBot && info.ChannelID == "" {
 				traqLogWarn("MESSAGE_CREATED skipped: empty channel messageID=%s", body.ID)
 			}
 			return nil, err
 		}
-		traqLogOK("MESSAGE_CREATED accepted messageID=%s channelID=%s", body.ID, channelID)
+		traqLogOK("MESSAGE_CREATED accepted messageID=%s channelID=%s", body.ID, info.ChannelID)
 		return []triggerPayload{{
-			Type:         "msg",
-			Ch:           channelID,
-			MessageID:    body.ID,
-			Source:       "ws",
-			SourceDetail: "traQ /api/v3/ws timeline_streaming:on MESSAGE_CREATED",
+			Type:             "msg",
+			Ch:               info.ChannelID,
+			MessageID:        body.ID,
+			MessageLength:    info.Length,
+			HasMessageLength: true,
+			Source:           "ws",
+			SourceDetail:     "traQ /api/v3/ws timeline_streaming:on MESSAGE_CREATED",
 		}}, nil
 	case "USER_VIEWSTATE_CHANGED":
 		var body wsViewStateChangedBody
@@ -222,34 +231,40 @@ func (s *server) parseTraqEvent(ctx context.Context, accessToken string, payload
 	}
 }
 
-func (s *server) fetchMessageInfo(ctx context.Context, accessToken string, messageID string) (string, bool, error) {
+func (s *server) fetchMessageInfo(ctx context.Context, accessToken string, messageID string) (messageInfo, error) {
 	traqLogAPI("GET /api/v3/messages/%s", messageID)
 	var message traqMessage
 	status, err := s.traqGetJSON(ctx, accessToken, "/api/v3/messages/"+url.PathEscape(messageID), &message)
 	if err != nil {
 		if status == http.StatusNotFound {
 			traqLogWarn("GET /api/v3/messages/%s not found", messageID)
-			return "", false, nil
+			return messageInfo{}, nil
 		}
 		traqLogError("GET /api/v3/messages/%s: %v", messageID, err)
-		return "", false, err
+		return messageInfo{}, err
 	}
 	if message.UserID == "" {
-		return "", false, fmt.Errorf("message endpoint returned empty userId for %s", messageID)
+		return messageInfo{}, fmt.Errorf("message endpoint returned empty userId for %s", messageID)
+	}
+	info := messageInfo{
+		ChannelID: message.ChannelID,
+		Length:    len([]rune(message.Content)),
 	}
 
 	if isBot, ok := s.cachedUserIsBot(message.UserID); ok {
 		traqLogOK("GET /api/v3/messages/%s channelID=%s userID=%s bot=%t botCache=hit", messageID, message.ChannelID, message.UserID, isBot)
-		return message.ChannelID, isBot, nil
+		info.IsBot = isBot
+		return info, nil
 	}
 
 	isBot, err := s.fetchUserIsBot(ctx, accessToken, message.UserID)
 	if err != nil {
-		return "", false, err
+		return messageInfo{}, err
 	}
 	s.storeUserIsBot(message.UserID, isBot)
 	traqLogOK("GET /api/v3/messages/%s channelID=%s userID=%s bot=%t botCache=miss", messageID, message.ChannelID, message.UserID, isBot)
-	return message.ChannelID, isBot, nil
+	info.IsBot = isBot
+	return info, nil
 }
 
 func (s *server) cachedUserIsBot(userID string) (bool, bool) {

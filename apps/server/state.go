@@ -280,8 +280,9 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 			}
 			sm.rememberMessageIDLocked(trigger.MessageID)
 		}
-		sm.addScoreLocked(trigger.Ch, messageScoreAmount)
-		trigger.ScoreDelta = messageScoreAmount
+		score := messageScoreDelta(trigger)
+		sm.addScoreLocked(trigger.Ch, score)
+		trigger.ScoreDelta = score
 		return trigger, true
 	case "mov":
 		if trigger.ClearCurrent {
@@ -333,6 +334,16 @@ func (sm *stateManager) applyTrigger(trigger triggerPayload) (triggerPayload, bo
 	default:
 		return trigger, false
 	}
+}
+
+func messageScoreDelta(trigger triggerPayload) float64 {
+	if !trigger.HasMessageLength {
+		return messageScoreAmount
+	}
+	if trigger.MessageLength <= 0 {
+		return 0
+	}
+	return messageScoreAmount * math.Log1p(float64(trigger.MessageLength))
 }
 
 func (sm *stateManager) rememberMessageIDLocked(messageID string) {

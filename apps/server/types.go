@@ -44,16 +44,18 @@ type sseEvent struct {
 }
 
 type triggerPayload struct {
-	Type         string  `json:"type"`
-	Ch           string  `json:"ch,omitempty"`
-	Usr          string  `json:"usr,omitempty"`
-	From         string  `json:"from,omitempty"`
-	To           string  `json:"to,omitempty"`
-	ScoreDelta   float64 `json:"delta,omitempty"`
-	ClearCurrent bool    `json:"-"`
-	MessageID    string  `json:"-"`
-	Source       string  `json:"-"`
-	SourceDetail string  `json:"-"`
+	Type             string  `json:"type"`
+	Ch               string  `json:"ch,omitempty"`
+	Usr              string  `json:"usr,omitempty"`
+	From             string  `json:"from,omitempty"`
+	To               string  `json:"to,omitempty"`
+	ScoreDelta       float64 `json:"delta"`
+	ClearCurrent     bool    `json:"-"`
+	MessageID        string  `json:"-"`
+	MessageLength    int     `json:"-"`
+	HasMessageLength bool    `json:"-"`
+	Source           string  `json:"-"`
+	SourceDetail     string  `json:"-"`
 }
 
 type syncPayload struct {
