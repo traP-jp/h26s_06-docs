@@ -514,7 +514,7 @@ onBeforeUnmount(() => {
             class="loading"
         >
             <span class="loading__orbit" />
-            <p>CHANNEL UNIVERSE を構築中</p>
+            <p>QOSMOS を構築中</p>
         </div>
 
         <div
