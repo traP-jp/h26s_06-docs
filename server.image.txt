@@ -1,1 +1,1 @@
-ghcr.io/trap-jp/h26s_06/server@sha256:aecbe4cba34e3c3e30fe2aa063bfb45fc4bbdfa923b3b3fe2ae65054ea1bb0b3
+ghcr.io/trap-jp/h26s_06/server@sha256:e55f3f8b21a7577cc1747f864fe80c775a9e830e53e616c8f8be203551c02b72
