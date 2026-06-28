@@ -1,72 +1,29 @@
-import { onBeforeUnmount, onMounted } from "vue";
-import type { Ref } from "vue";
-
-interface NavigationTargets {
-    parentId?: string;
-    childId?: string;
-    previousSiblingId?: string;
-    nextSiblingId?: string;
-}
-
-interface SelectedChannel {
-    navigation?: NavigationTargets;
-}
-
-interface KeyboardManagerOptions {
-    selected: Readonly<Ref<SelectedChannel | undefined>>;
-    selectedId: Ref<string | undefined>;
-
-    muted?: Ref<boolean>;
-    settingsOpen?: Ref<boolean>;
-
-    onMuteToggle?: () => void;
-    onSettingsOpen?: () => void;
-    onSettingsClose?: () => void;
-}
+import type { KeyboardController, KeyboardNavigationTarget } from "../core/keyboardController";
 
 const ARROW_TO_TARGET = {
     ArrowUp: "childId",
     ArrowDown: "parentId",
     ArrowLeft: "previousSiblingId",
     ArrowRight: "nextSiblingId",
-} as const;
+} as const satisfies Record<string, KeyboardNavigationTarget>;
 
 type ArrowKey = keyof typeof ARROW_TO_TARGET;
 
-export function useKeyboardManager({
-    selected,
-    selectedId,
-    muted,
-    settingsOpen,
-    onMuteToggle,
-    onSettingsOpen,
-    onSettingsClose,
-}: KeyboardManagerOptions): void {
-    function handleKeyDown(event: KeyboardEvent): void {
+export class KeyboardManager {
+    constructor(private readonly controller: KeyboardController) {}
+
+    start(): void {
+        window.addEventListener("keydown", this.handleKeyDown);
+    }
+
+    stop(): void {
+        window.removeEventListener("keydown", this.handleKeyDown);
+    }
+
+    private readonly handleKeyDown = (event: KeyboardEvent): void => {
         if (event.key === "Escape") {
             event.preventDefault();
-
-            if (settingsOpen?.value) {
-                if (onSettingsClose) {
-                    onSettingsClose();
-                } else {
-                    settingsOpen.value = false;
-                }
-
-                return;
-            }
-
-            if (selectedId.value) {
-                selectedId.value = undefined;
-                return;
-            }
-
-            if (onSettingsOpen) {
-                onSettingsOpen();
-            } else if (settingsOpen) {
-                settingsOpen.value = true;
-            }
-
+            this.controller.handleEscape();
             return;
         }
 
@@ -74,34 +31,16 @@ export function useKeyboardManager({
 
         if (isMuteKey(event)) {
             event.preventDefault();
-
-            if (onMuteToggle) {
-                onMuteToggle();
-            } else if (muted) {
-                muted.value = !muted.value;
-            }
-
+            this.controller.toggleMute();
             return;
         }
 
         if (!isArrowKey(event.key)) return;
 
-        const targetKey = ARROW_TO_TARGET[event.key];
-        const nextSelectedId = selected.value?.navigation?.[targetKey];
-
-        if (!nextSelectedId) return;
-
-        event.preventDefault();
-        selectedId.value = nextSelectedId;
-    }
-
-    onMounted(() => {
-        window.addEventListener("keydown", handleKeyDown);
-    });
-
-    onBeforeUnmount(() => {
-        window.removeEventListener("keydown", handleKeyDown);
-    });
+        if (this.controller.navigate(ARROW_TO_TARGET[event.key])) {
+            event.preventDefault();
+        }
+    };
 }
 
 function isArrowKey(key: string): key is ArrowKey {
