@@ -47,6 +47,8 @@ const host = useTemplateRef<HTMLDivElement>("host");
 const selectionPathOpacity = 0.82;
 const rootEdgeColor = "#7b8798";
 const rootEdgeVisualOpacity = 0.26;
+const idleAutoRotationDelay = 5000;
+const idleAutoRotationRadiansPerSecond = 0.012;
 
 let renderer: WebGLRenderer | undefined;
 let scene: Scene | undefined;
@@ -60,6 +62,7 @@ let hierarchyEdges: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let selectionPath: Line<BufferGeometry, LineBasicMaterial> | undefined;
 let frame = 0;
 let lastFrame = performance.now();
+let lastCameraInteractionAt = performance.now();
 let pointerDown = new Vector2();
 let pointerLast = new Vector2();
 let pointerMoved = false;
@@ -133,6 +136,8 @@ function initialise() {
         renderer.domElement.addEventListener("pointerup", onPointerUp);
         renderer.domElement.addEventListener("pointerleave", onPointerLeave);
         renderer.domElement.addEventListener("webglcontextlost", onContextLost);
+        window.addEventListener("keydown", noteCameraInteraction);
+        window.addEventListener("mousedown", noteCameraInteraction);
         resizeObserver = new ResizeObserver(resize);
         resizeObserver.observe(element);
         document.addEventListener("visibilitychange", resetFrameClock);
@@ -322,10 +327,20 @@ function draw(now: number) {
     updateEdges(now);
     updateSelectionPathPositions(now);
     cameraController?.updateTransition(props.graph, now);
+    updateIdleAutoRotation(now, delta);
     if (!customRotationActive) controls?.update();
     constrainRotationCenterToViewport();
     updateHoverCursor();
     composer.render();
+}
+
+function updateIdleAutoRotation(now: number, delta: number) {
+    if (customRotationActive || now - lastCameraInteractionAt < idleAutoRotationDelay) return;
+    const element = renderer?.domElement;
+    if (!element) return;
+    const rotationScale = (Math.PI * 2) / Math.max(1, element.clientHeight);
+    const deltaX = -(idleAutoRotationRadiansPerSecond * delta) / rotationScale;
+    rotateAroundSelectedNode(deltaX, 0);
 }
 
 function updateSelectionPathPositions(now: number) {
@@ -360,6 +375,10 @@ function resize() {
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
     composer.setSize(width, height);
+}
+
+function noteCameraInteraction() {
+    lastCameraInteractionAt = performance.now();
 }
 
 function onPointerDown(event: PointerEvent) {
@@ -544,6 +563,8 @@ function dispose() {
     cancelAnimationFrame(frame);
     resizeObserver?.disconnect();
     document.removeEventListener("visibilitychange", resetFrameClock);
+    window.removeEventListener("keydown", noteCameraInteraction);
+    window.removeEventListener("mousedown", noteCameraInteraction);
     const canvas = renderer?.domElement;
     canvas?.removeEventListener("pointerdown", onPointerDown);
     canvas?.removeEventListener("pointermove", onPointerMove);
