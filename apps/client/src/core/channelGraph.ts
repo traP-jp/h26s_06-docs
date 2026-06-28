@@ -14,8 +14,6 @@ const PALETTE = [
 const DENSE_CHILD_THRESHOLD = 24;
 const DENSE_EMPHASIZED_CHILDREN = 12;
 const CONDENSED_EMPHASIS = 0.22;
-const MESSAGE_SCORE_AMOUNT = 1.0;
-const MOVEMENT_SCORE_AMOUNT = 0.25;
 const ANCESTOR_SCORE_FACTOR = 0.45;
 const SCORE_DECAY_TIME_SCALE = 300;
 const RELATIVE_SCORE_SCALE_FLOOR = 2.2;
@@ -172,9 +170,7 @@ export class ChannelGraph {
         }
 
         let node = this.get(id);
-        let heat =
-            trigger.delta ??
-            (trigger.type === "msg" ? MESSAGE_SCORE_AMOUNT : MOVEMENT_SCORE_AMOUNT);
+        let heat = trigger.delta ?? 0;
         while (node) {
             node.currentScore += heat;
             node.targetScore += heat;
