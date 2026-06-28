@@ -10,6 +10,6 @@ COPY . .
 RUN bun run build
 
 # Production stage
-FROM scratch AS runner
+FROM alpine AS runner
 
-COPY --from=builder /app/dist /
+COPY --from=builder /app/dist /dist
