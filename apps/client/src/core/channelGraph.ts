@@ -9,7 +9,7 @@ const PALETTE = [
     "#20c878",
     "#168cff",
     "#a33ce8",
-    "#e8f0ff",
+    "#00d6c9",
 ];
 const DENSE_CHILD_THRESHOLD = 24;
 const DENSE_EMPHASIZED_CHILDREN = 12;

@@ -87,6 +87,30 @@ function emphasizedChildIds(graph: ChannelGraph) {
         .map(node => node.id);
 }
 
+describe("ChannelGraph node colors", () => {
+    test("reserves white for the grand root", () => {
+        const graph = new ChannelGraph({
+            grand_root: {
+                id: "grand_root",
+                parentId: "",
+                children: ["island"],
+                depth: 0,
+                islandId: -1,
+            },
+            island: {
+                id: "island",
+                parentId: "grand_root",
+                children: [],
+                depth: 1,
+                islandId: 8,
+            },
+        });
+
+        expect(graph.get("grand_root")!.color).toBe("#ffffff");
+        expect(graph.get("island")!.color).toBe("#00d6c9");
+    });
+});
+
 describe("ChannelGraph dense child emphasis", () => {
     test("emphasizes a sample and changes it after selection changes", () => {
         const graph = new ChannelGraph(createDenseChannels());
