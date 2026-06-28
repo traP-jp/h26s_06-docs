@@ -72,7 +72,7 @@ func newDemoStateManager() (*stateManager, error) {
 	channels := map[string]*channel{
 		grandRootID: {
 			ID:           grandRootID,
-			Name:         "Grand Root",
+			Name:         "traQ",
 			ParentID:     "",
 			IslandID:     -1,
 			Depth:        0,
@@ -131,7 +131,7 @@ func newStateManagerFromTraq(channels []traqChannel) (*stateManager, error) {
 	nodes := map[string]*channel{
 		grandRootID: {
 			ID:           grandRootID,
-			Name:         "Grand Root",
+			Name:         "traQ",
 			ParentID:     "",
 			IslandID:     -1,
 			Depth:        0,
