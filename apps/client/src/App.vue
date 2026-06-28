@@ -58,6 +58,7 @@ const currentUser = ref<AuthUser>();
 const focusId = ref<string | undefined>();
 const focusRevision = ref(0);
 const settingsOpen = ref(false);
+const detailsOpen = ref(false);
 let pendingStatusChannelId: string | undefined;
 let bufferedViewers: ViewersPayload | undefined;
 
@@ -306,6 +307,7 @@ onMounted(() => {
 });
 
 watch(selectedId, (newId, oldId) => {
+    detailsOpen.value = Boolean(newId);
     viewers.value = [];
     bufferedViewers = undefined;
     viewersPending.value = Boolean(newId) && !isDemoMode;
@@ -424,11 +426,11 @@ onBeforeUnmount(() => {
         />
 
         <ChannelDetails
-            v-if="selected"
+            v-if="selected && detailsOpen"
             :selected="selected"
             :viewer-count="viewersUnavailable ? undefined : viewers.length"
             :viewers-pending="viewersPending"
-            @close="selectedId = undefined"
+            @close="detailsOpen = false"
         />
 
         <footer

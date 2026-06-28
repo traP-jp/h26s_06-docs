@@ -143,6 +143,18 @@ describe("ChannelGraph active visibility", () => {
         expect(graph.get("grand_root")!.isLayoutActive).toBe(true);
     });
 
+    test("propagates active descendant scores to inactive parents", () => {
+        const graph = new ChannelGraph(createDeepChannels());
+        graph.get("leaf")!.relativeScore = 0.24;
+        graph.get("branch")!.relativeScore = 0;
+
+        graph.updateVisibility(undefined, 0);
+
+        expect(graph.get("leaf")!.activeDescendantScore).toBe(0.24);
+        expect(graph.get("branch")!.activeDescendantScore).toBe(0.24);
+        expect(graph.get("root")!.activeDescendantScore).toBe(0.24);
+    });
+
     test("reveals a hidden message path one reached node at a time", () => {
         const graph = new ChannelGraph(createDeepChannels());
         graph.updateVisibility();

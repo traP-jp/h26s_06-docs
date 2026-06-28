@@ -40,6 +40,7 @@ export interface ChannelNode {
     isLayoutActive: boolean;
     isExpansionOrigin: boolean;
     emphasis: number;
+    activeDescendantScore: number;
     color: string;
 }
 
@@ -50,6 +51,7 @@ export type VisualEvent =
 export class ChannelGraph {
     readonly nodes: ChannelNode[];
     private readonly nodeMap = new Map<string, number>();
+    private readonly parentIndices: Int32Array;
     private readonly visualEvents: VisualEvent[] = [];
     private readonly pendingMessageRevealIds = new Set<string>();
     private snapNextSync = false;
@@ -83,6 +85,7 @@ export class ChannelGraph {
                 isLayoutActive: false,
                 isExpansionOrigin: false,
                 emphasis: 1,
+                activeDescendantScore: 0,
                 color:
                     channel.id === "grand_root"
                         ? "#ffffff"
@@ -90,13 +93,20 @@ export class ChannelGraph {
             };
         });
 
+        this.parentIndices = new Int32Array(this.nodes.length);
+        this.parentIndices.fill(-1);
+
         for (const channel of ordered) {
             const node = this.get(channel.id);
             if (!node) continue;
+            if (node.parentId) {
+                this.parentIndices[node.index] = this.nodeMap.get(node.parentId) ?? -1;
+            }
             node.children = channel.children
                 ?.map(id => this.nodeMap.get(id))
                 .filter((index): index is number => index !== undefined);
         }
+        this.updateActiveDescendantScores();
     }
 
     get(id: string) {
@@ -351,7 +361,25 @@ export class ChannelGraph {
                 changed = true;
             }
         }
+        this.updateActiveDescendantScores();
         return changed;
+    }
+
+    private updateActiveDescendantScores() {
+        for (const node of this.nodes) {
+            node.activeDescendantScore =
+                node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD ? node.relativeScore : 0;
+        }
+
+        for (let index = this.nodes.length - 1; index >= 0; index -= 1) {
+            const node = this.nodes[index];
+            if (!node) continue;
+            const parentIndex = this.parentIndices[index] ?? -1;
+            if (parentIndex < 0) continue;
+            const parent = this.nodes[parentIndex];
+            if (!parent || node.activeDescendantScore <= parent.activeDescendantScore) continue;
+            parent.activeDescendantScore = node.activeDescendantScore;
+        }
     }
 
     private pickDenseChildren(requiredIds: ReadonlySet<string>) {
@@ -430,7 +458,10 @@ export class ChannelGraph {
 
         for (const node of this.nodes) {
             node.relativeScore = Math.min(1, node.currentScore / this.scoreScale);
+        }
+        this.updateActiveDescendantScores();
 
+        for (const node of this.nodes) {
             node.x += (node.targetX - node.x) * spatialBlend;
             node.y += (node.targetY - node.y) * spatialBlend;
             node.z += (node.targetZ - node.z) * spatialBlend;

@@ -179,6 +179,35 @@ func TestStateManagerApplyTriggerSkipsDuplicateMessage(t *testing.T) {
 	}
 }
 
+func TestStateManagerApplyTriggerUsesMessageLengthScoreDelta(t *testing.T) {
+	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
+	if err != nil {
+		t.Fatalf("newStateManagerFromTraq returned error: %v", err)
+	}
+
+	applied, ok := state.applyTrigger(triggerPayload{
+		Type:             "msg",
+		Ch:               "root",
+		MessageID:        "message-1",
+		MessageLength:    10,
+		HasMessageLength: true,
+	})
+	if !ok {
+		t.Fatal("message was not applied")
+	}
+
+	want := messageScoreAmount * math.Log1p(10)
+	if applied.ScoreDelta != want {
+		t.Fatalf("delta = %v, want %v", applied.ScoreDelta, want)
+	}
+	state.mu.RLock()
+	score := state.channels["root"].Score
+	state.mu.RUnlock()
+	if score != want {
+		t.Fatalf("root score = %v, want %v", score, want)
+	}
+}
+
 func TestStateManagerInitPayloadIncludesCurrentScore(t *testing.T) {
 	state, err := newStateManagerFromTraq([]traqChannel{{ID: "root", Name: "root"}})
 	if err != nil {

@@ -544,6 +544,7 @@ function isNodeRendered(node: ChannelGraph["nodes"][number]) {
     return (
         !props.activeOnly ||
         node.relativeScore > ACTIVE_RELATIVE_SCORE_THRESHOLD ||
+        node.activeDescendantScore > 0 ||
         node.id === "grand_root" ||
         node.id === props.selectedId
     );
