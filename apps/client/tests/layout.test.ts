@@ -180,4 +180,16 @@ describe("calculateLayout", () => {
             distance(position(hotChildPositions, 2), position(hotChildPositions, 0))
         ).toBeGreaterThan(distance(position(coolPositions, 2), position(coolPositions, 0)));
     });
+
+    test("places first-level channels farther from grand root in all channel mode", () => {
+        const nodes = createIrregularTree();
+        const collapsedPositions = calculateLayout(nodes);
+        const allChannelPositions = calculateLayout(nodes, { displayMode: "all" });
+
+        expect(
+            distance(position(allChannelPositions, 1), position(allChannelPositions, 0))
+        ).toBeGreaterThan(
+            distance(position(collapsedPositions, 1), position(collapsedPositions, 0))
+        );
+    });
 });

@@ -9,9 +9,12 @@ import {
 } from "d3-force-3d";
 import type { Force, SimulationLinkDatum, SimulationNodeDatum } from "d3-force-3d";
 
+import type { ChannelDisplayMode } from "./channelGraph";
+
 const POSITION_COMPONENTS = 3;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const ROOT_SEPARATION = 55;
+const ALL_CHANNEL_ROOT_RADIUS = 340;
 const MIN_OUTWARD_DOT = 0.001;
 const HEAT_REPULSION_STRENGTH = 34;
 
@@ -55,7 +58,16 @@ interface ActiveHierarchy {
     ordinalByChild: ReadonlyMap<number, number>;
 }
 
-export function calculateLayout(nodes: LayoutNode[]) {
+export interface LayoutOptions {
+    displayMode?: ChannelDisplayMode;
+}
+
+export interface LayoutRequest {
+    nodes: LayoutNode[];
+    options?: LayoutOptions;
+}
+
+export function calculateLayout(nodes: LayoutNode[], options: LayoutOptions = {}) {
     const positions = new Float32Array(nodes.length * POSITION_COMPONENTS);
     if (nodes.length === 0) return positions;
 
@@ -71,7 +83,7 @@ export function calculateLayout(nodes: LayoutNode[]) {
     const islandIds = [
         ...new Set(activeNodes.map(node => node.islandId).filter(islandId => islandId >= 0)),
     ].sort((left, right) => left - right);
-    const islandCenters = createIslandCenters(islandIds);
+    const islandCenters = createIslandCenters(islandIds, options.displayMode);
     const islandRoots = findIslandRoots(activeNodes, activeByIndex);
 
     seedMissingPositions(
@@ -165,7 +177,9 @@ export function calculateLayout(nodes: LayoutNode[]) {
         .stop();
 
     simulation.tick(simulationTicks);
-    constrainDeepNodesOutward(forceNodes, activeNodes, activeByIndex);
+    if (options.displayMode !== "all") {
+        constrainDeepNodesOutward(forceNodes, activeNodes, activeByIndex);
+    }
 
     for (const node of forceNodes) {
         setPosition(positions, node.id, node.x ?? 0, node.y ?? 0, node.z ?? 0);
@@ -214,11 +228,12 @@ function aggregateHeatScores(activeNodes: LayoutNode[], hierarchy: ActiveHierarc
     return heatScores;
 }
 
-function createIslandCenters(islandIds: number[]) {
+function createIslandCenters(islandIds: number[], displayMode: ChannelDisplayMode = "collapsed") {
     const centers = new Map<number, Point>();
     if (islandIds.length === 0) return centers;
 
-    const radius = Math.max(260, ROOT_SEPARATION * Math.sqrt(islandIds.length));
+    const minimumRadius = displayMode === "all" ? ALL_CHANNEL_ROOT_RADIUS : 260;
+    const radius = Math.max(minimumRadius, ROOT_SEPARATION * Math.sqrt(islandIds.length));
     for (let ordinal = 0; ordinal < islandIds.length; ordinal += 1) {
         const islandId = islandIds[ordinal];
         if (islandId === undefined) continue;

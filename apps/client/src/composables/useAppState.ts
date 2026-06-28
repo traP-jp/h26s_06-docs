@@ -1,6 +1,6 @@
 import { computed, ref, shallowRef, watch } from "vue";
 
-import type { ChannelGraph, ChannelNode } from "../core/channelGraph";
+import type { ChannelDisplayMode, ChannelGraph, ChannelNode } from "../core/channelGraph";
 import type { ConnectionState, TriggerPayload } from "../types/api";
 
 export interface NavigationTargets {
@@ -23,6 +23,7 @@ export function useAppState() {
     const status = ref("デモサーバーへ接続中");
     const selectedId = ref<string>();
     const activeOnly = ref(false);
+    const displayMode = ref<ChannelDisplayMode>("collapsed");
     const eventCount = ref(0);
     const lastEvent = ref("初期データを待っています");
     const updatedAt = ref("");
@@ -92,6 +93,7 @@ export function useAppState() {
         status,
         selectedId,
         activeOnly,
+        displayMode,
         eventCount,
         lastEvent,
         updatedAt,

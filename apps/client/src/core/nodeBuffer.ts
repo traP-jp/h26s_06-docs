@@ -1,8 +1,13 @@
-import { ACTIVE_RELATIVE_SCORE_THRESHOLD, type ChannelNode } from "./channelGraph";
+import {
+    ACTIVE_RELATIVE_SCORE_THRESHOLD,
+    type ChannelDisplayMode,
+    type ChannelNode,
+} from "./channelGraph";
 
 const MATRIX_SIZE = 16;
 const COLOR_SIZE = 3;
 const ACTIVE_ANCESTOR_VISUAL_WEIGHT = 0.42;
+const ALL_CHANNEL_NODE_SCALE = 1.42;
 
 /**
  * ChannelGraph と GPU の境界。行列と色を連続した TypedArray に保持し、
@@ -17,7 +22,14 @@ export class NodeBuffer {
         this.colorData = new Float32Array(count * COLOR_SIZE);
     }
 
-    update(nodes: readonly ChannelNode[], now: number, selectedId?: string, activeOnly = false) {
+    update(
+        nodes: readonly ChannelNode[],
+        now: number,
+        selectedId?: string,
+        activeOnly = false,
+        displayMode: ChannelDisplayMode = "collapsed"
+    ) {
+        const displayModeScale = displayMode === "all" ? ALL_CHANNEL_NODE_SCALE : 1;
         for (let index = 0; index < nodes.length; index += 1) {
             const node = nodes[index];
             if (!node) continue;
@@ -49,6 +61,7 @@ export class NodeBuffer {
                 selectedScale *
                 node.emphasis *
                 displayWeight *
+                displayModeScale *
                 Number(visible) *
                 node.visibilityAlpha;
 

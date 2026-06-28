@@ -26,7 +26,11 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
-import { ACTIVE_RELATIVE_SCORE_THRESHOLD, type ChannelGraph } from "../core/channelGraph";
+import {
+    ACTIVE_RELATIVE_SCORE_THRESHOLD,
+    type ChannelDisplayMode,
+    type ChannelGraph,
+} from "../core/channelGraph";
 import type {
     CameraMoveDirection,
     CameraRotationDirection,
@@ -43,6 +47,7 @@ const props = defineProps<{
     focusId?: string;
     focusRevision: number;
     activeOnly: boolean;
+    displayMode: ChannelDisplayMode;
 }>();
 const emit = defineEmits<{
     select: [id: string | undefined];
@@ -240,7 +245,13 @@ function createNodeMesh() {
     });
     const mesh = new InstancedMesh(geometry, material, props.graph.nodes.length);
     mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-    nodeBuffer.update(props.graph.nodes, performance.now(), props.selectedId, props.activeOnly);
+    nodeBuffer.update(
+        props.graph.nodes,
+        performance.now(),
+        props.selectedId,
+        props.activeOnly,
+        props.displayMode
+    );
     (mesh.instanceMatrix.array as Float32Array).set(nodeBuffer.matrixData);
     for (let index = 0; index < props.graph.nodes.length; index += 1) {
         const offset = index * 3;
@@ -286,6 +297,10 @@ function createEdges() {
 
 function updateEdges(now: number) {
     if (!hierarchyEdges) return;
+    if (props.displayMode === "all") {
+        hierarchyEdges.geometry.setDrawRange(0, 0);
+        return;
+    }
     const positionAttribute = hierarchyEdges.geometry.getAttribute(
         "position"
     ) as Float32BufferAttribute;
@@ -398,7 +413,13 @@ function draw(now: number) {
     props.graph.update(delta);
     for (const event of props.graph.takeVisualEvents()) effects?.play(event, now);
     effects?.update(now);
-    nodeBuffer.update(props.graph.nodes, now, props.selectedId, props.activeOnly);
+    nodeBuffer.update(
+        props.graph.nodes,
+        now,
+        props.selectedId,
+        props.activeOnly,
+        props.displayMode
+    );
     (nodes.instanceMatrix.array as Float32Array).set(nodeBuffer.matrixData);
     nodes.instanceMatrix.needsUpdate = true;
     updateEdges(now);

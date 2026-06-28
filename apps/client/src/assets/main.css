@@ -214,7 +214,7 @@ h2 {
     top: 330px;
     left: 24px;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     width: 230px;
     gap: 6px;
     padding: 14px 17px 17px;

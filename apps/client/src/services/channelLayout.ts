@@ -1,9 +1,13 @@
 import type { ChannelNode } from "../core/channelGraph";
-import type { LayoutNode } from "../core/layout";
+import type { LayoutNode, LayoutOptions, LayoutRequest } from "../core/layout";
 
-export async function calculateChannelLayout(nodes: readonly ChannelNode[]) {
+export async function calculateChannelLayout(
+    nodes: readonly ChannelNode[],
+    options: LayoutOptions = {}
+) {
     const input = createLayoutInput(nodes);
-    if (typeof Worker === "undefined") return await calculateFallback(input);
+    const request: LayoutRequest = { nodes: input, options };
+    if (typeof Worker === "undefined") return await calculateFallback(request);
 
     return await new Promise<Float32Array>((resolve, reject) => {
         const worker = new Worker(new URL("../workers/layout.worker.ts", import.meta.url), {
@@ -17,13 +21,13 @@ export async function calculateChannelLayout(nodes: readonly ChannelNode[]) {
             worker.terminate();
             reject(new Error(event.message || "layout worker failed"));
         };
-        worker.postMessage(input);
-    }).catch(() => calculateFallback(input));
+        worker.postMessage(request);
+    }).catch(() => calculateFallback(request));
 }
 
-async function calculateFallback(input: LayoutNode[]) {
+async function calculateFallback(request: LayoutRequest) {
     const { calculateLayout } = await import("../core/layout");
-    return calculateLayout(input);
+    return calculateLayout(request.nodes, request.options);
 }
 
 function createLayoutInput(nodes: readonly ChannelNode[]): LayoutNode[] {
