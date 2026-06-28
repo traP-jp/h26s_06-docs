@@ -13,6 +13,7 @@ import {
     LineSegments,
     MeshBasicMaterial,
     PerspectiveCamera,
+    Points,
     SRGBColorSpace,
     Scene,
     ShaderMaterial,
@@ -77,6 +78,9 @@ const shootingStarPoolSize = 40;
 const shootingStarMeanInterval = 3000;
 const shootingStarClusterChance = 0.18;
 const shootingStarClusterMax = 5;
+const backgroundStarCount = 220;
+const backgroundStarMinRadius = 1050;
+const backgroundStarMaxRadius = 1850;
 
 interface ShootingStar {
     active: boolean;
@@ -97,6 +101,7 @@ let cameraController: CameraController | undefined;
 let composer: EffectComposer | undefined;
 let effects: EffectPool | undefined;
 let nodes: InstancedMesh<SphereGeometry, ShaderMaterial> | undefined;
+let backgroundStars: Points<BufferGeometry, ShaderMaterial> | undefined;
 let shootingStars: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let hierarchyEdges: LineSegments<BufferGeometry, LineBasicMaterial> | undefined;
 let selectionPath: Line<BufferGeometry, LineBasicMaterial> | undefined;
@@ -200,6 +205,8 @@ function initialise() {
         controls.enablePan = true;
         cameraController = new CameraController(camera, controls);
 
+        backgroundStars = createBackgroundStars();
+        scene.add(backgroundStars);
         resetShootingStars();
         shootingStars = createShootingStars();
         scene.add(shootingStars);
@@ -312,6 +319,80 @@ function createShootingStars() {
     lines.frustumCulled = false;
     lines.renderOrder = -10;
     return lines;
+}
+
+function createBackgroundStars() {
+    const positions = new Float32Array(backgroundStarCount * 3);
+    const phases = new Float32Array(backgroundStarCount);
+    const sizes = new Float32Array(backgroundStarCount);
+    let randomState = 0x6d2b79f5;
+    const random = () => {
+        randomState = (Math.imul(randomState, 1_664_525) + 1_013_904_223) >>> 0;
+        return randomState / 0x1_0000_0000;
+    };
+
+    for (let index = 0; index < backgroundStarCount; index += 1) {
+        const z = random() * 2 - 1;
+        const angle = random() * Math.PI * 2;
+        const radial = Math.sqrt(1 - z * z);
+        const radius =
+            backgroundStarMinRadius +
+            random() * (backgroundStarMaxRadius - backgroundStarMinRadius);
+        const offset = index * 3;
+        positions[offset] = Math.cos(angle) * radial * radius;
+        positions[offset + 1] = Math.sin(angle) * radial * radius;
+        positions[offset + 2] = z * radius;
+        phases[index] = random() * Math.PI * 2;
+        sizes[index] = 1.8 * (0.82 + random() * 0.36);
+    }
+
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("aPhase", new Float32BufferAttribute(phases, 1));
+    geometry.setAttribute("aSize", new Float32BufferAttribute(sizes, 1));
+    const stars = new Points(
+        geometry,
+        new ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uPixelRatio: { value: renderer?.getPixelRatio() ?? 1 },
+                uColor: { value: new Color("#c4ddff") },
+            },
+            vertexShader: `
+                attribute float aPhase;
+                attribute float aSize;
+                uniform float uTime;
+                uniform float uPixelRatio;
+                varying float vTwinkle;
+
+                void main() {
+                    vec3 animatedPosition = position;
+                    animatedPosition.x += sin(uTime * 0.22 + aPhase) * 1.6;
+                    animatedPosition.y += cos(uTime * 0.18 + aPhase * 1.3) * 1.2;
+                    vTwinkle = 0.72 + sin(uTime * 1.15 + aPhase) * 0.28;
+                    gl_PointSize = aSize * uPixelRatio * (0.9 + vTwinkle * 0.1);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(animatedPosition, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 uColor;
+                varying float vTwinkle;
+
+                void main() {
+                    float distanceFromCenter = length(gl_PointCoord - vec2(0.5));
+                    float glow = 1.0 - smoothstep(0.08, 0.5, distanceFromCenter);
+                    gl_FragColor = vec4(uColor, glow * vTwinkle * 0.24);
+                }
+            `,
+            transparent: true,
+            blending: AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false,
+        })
+    );
+    stars.frustumCulled = false;
+    stars.renderOrder = -20;
+    return stars;
 }
 
 function createEdges() {
@@ -453,6 +534,8 @@ function draw(now: number) {
     for (const event of props.graph.takeVisualEvents()) effects?.play(event, now);
     effects?.update(now);
     updateShootingStars(now);
+    const starTimeUniform = backgroundStars?.material.uniforms.uTime;
+    if (starTimeUniform) starTimeUniform.value = now * 0.001;
     nodeBuffer.update(
         props.graph.nodes,
         now,
@@ -980,6 +1063,7 @@ function dispose() {
     controls?.dispose();
     effects?.dispose();
     effects = undefined;
+    backgroundStars = undefined;
     shootingStars = undefined;
     hierarchyEdges = undefined;
     selectionPath = undefined;
