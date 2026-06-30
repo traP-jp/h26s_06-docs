@@ -282,6 +282,17 @@ func (sm *stateManager) initPayloadBytes() []byte {
 	return append([]byte(nil), data...)
 }
 
+func (sm *stateManager) channelName(channelID string) (string, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	channel := sm.channels[channelID]
+	if channel == nil {
+		return "", false
+	}
+	return channel.Name, true
+}
+
 func (sm *stateManager) setUserStatus(userID string, channelID string) bool {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()

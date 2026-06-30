@@ -236,20 +236,25 @@ func (s *server) runDemoProducer(ctx context.Context, state *stateManager, hub *
 }
 
 func (s *server) consumeTraqStream(ctx context.Context, accessToken string, activeChannelIDs map[string]bool, state *stateManager, hub *eventHub) {
-	triggers, errs := s.streamTraqTriggers(ctx, accessToken)
+	events, errs := s.streamTraqEvents(ctx, accessToken, state)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case trigger, ok := <-triggers:
+		case event, ok := <-events:
 			if !ok {
-				triggers = nil
+				events = nil
 				if errs == nil {
 					return
 				}
 				continue
 			}
-			s.publishTrigger(trigger, activeChannelIDs, state, hub)
+			for _, trigger := range event.Triggers {
+				s.publishTrigger(trigger, activeChannelIDs, state, hub)
+			}
+			for _, update := range event.ViewerUpdates {
+				publishViewerUpdate(update, activeChannelIDs, hub)
+			}
 		case err, ok := <-errs:
 			if ok && err != nil && ctx.Err() == nil {
 				traqLogError("ws stream stopped: %v", err)
@@ -258,6 +263,36 @@ func (s *server) consumeTraqStream(ctx context.Context, accessToken string, acti
 			return
 		}
 	}
+}
+
+func publishViewerUpdate(update viewerUpdate, activeChannelIDs map[string]bool, hub *eventHub) bool {
+	sampledChannelIDs := make(map[string]bool, len(update.SampledChannelIDs))
+	for channelID := range update.SampledChannelIDs {
+		if activeChannelIDs == nil || activeChannelIDs[channelID] {
+			sampledChannelIDs[channelID] = true
+		}
+	}
+
+	rows := make([]viewerRow, 0, len(update.Rows))
+	for _, row := range update.Rows {
+		if activeChannelIDs != nil && !activeChannelIDs[row.ChannelID] {
+			continue
+		}
+		rows = append(rows, row)
+		if row.ChannelID != "" {
+			sampledChannelIDs[row.ChannelID] = true
+		}
+	}
+	if len(sampledChannelIDs) == 0 {
+		return false
+	}
+
+	totalChannelCount := len(activeChannelIDs)
+	if totalChannelCount == 0 {
+		totalChannelCount = len(sampledChannelIDs)
+	}
+	hub.publish(marshalEvent("viewers", viewerSnapshotFromRows(rows, len(sampledChannelIDs), totalChannelCount, time.Now())))
+	return true
 }
 
 func (s *server) consumeViewerSnapshots(ctx context.Context, accessToken string, channels []traqChannel, state *stateManager, hub *eventHub) {

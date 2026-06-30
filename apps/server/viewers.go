@@ -296,6 +296,61 @@ func (s *server) fetchViewerSnapshot(ctx context.Context, accessToken string, po
 	}, nil
 }
 
+func viewerSnapshotFromRows(rows []viewerRow, sampledChannelCount int, totalChannelCount int, now time.Time) viewerSnapshotPayload {
+	summariesByChannel := make(map[string]*viewerChannelSummary)
+	for _, row := range rows {
+		summary := summariesByChannel[row.ChannelID]
+		if summary == nil {
+			summary = &viewerChannelSummary{
+				ChannelID:   row.ChannelID,
+				ChannelName: row.ChannelName,
+			}
+			summariesByChannel[row.ChannelID] = summary
+		}
+		summary.Count++
+		switch row.State {
+		case "editing":
+			summary.Editing++
+		case "monitoring":
+			summary.Monitoring++
+		case "stale_viewing":
+			summary.Stale++
+		}
+	}
+
+	summaries := make([]viewerChannelSummary, 0, len(summariesByChannel))
+	for _, summary := range summariesByChannel {
+		summaries = append(summaries, *summary)
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].Count == summaries[j].Count {
+			return summaries[i].ChannelName < summaries[j].ChannelName
+		}
+		return summaries[i].Count > summaries[j].Count
+	})
+
+	recent := append([]viewerRow(nil), rows...)
+	sort.Slice(recent, func(i, j int) bool {
+		return recent[i].UpdatedAt.After(recent[j].UpdatedAt)
+	})
+	totalRows := len(recent)
+	if len(summaries) > 12 {
+		summaries = summaries[:12]
+	}
+	if len(recent) > 24 {
+		recent = recent[:24]
+	}
+
+	return viewerSnapshotPayload{
+		TS:              now.Unix(),
+		Total:           totalRows,
+		SampledChannels: sampledChannelCount,
+		TotalChannels:   totalChannelCount,
+		Channels:        summaries,
+		Recent:          recent,
+	}
+}
+
 func (s *server) fetchChannelViewers(ctx context.Context, accessToken string, channelID string) ([]traqViewer, error) {
 	traqLogAPI("GET /api/v3/channels/%s/viewers", channelID)
 	var viewers []traqViewer
